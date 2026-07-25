@@ -63,8 +63,9 @@ export class AuthenticatePlayer {
         email,
         name,
         avatarUrl,
-        x: 950 + Math.random() * 200,
-        y: 800 + Math.random() * 200,
+        // Spawn around Sentrum / Karl Johan on the real city map.
+        x: 1320 + Math.random() * 220,
+        y: 1180 + Math.random() * 180,
         lat: 59.9139,
         lng: 10.7522,
         status: 'Just arrived! Hei Oslo! 👋',

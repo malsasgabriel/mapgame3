@@ -49,3 +49,13 @@ img { display: block; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: 0.001ms !important; }
 }
+
+.oslo-real-map { position:absolute; inset:0; width:100%; height:100%; background:#dcebf0; }
+.oslo-real-map--night .leaflet-tile-pane { filter:brightness(.58) saturate(.76) hue-rotate(8deg); }
+.oslo-marker-shell { background:transparent!important; border:0!important; }
+.oslo-pin,.oslo-landmark,.oslo-collectible { transform:translate(-50%,-100%); border:0; pointer-events:auto; font:inherit; cursor:pointer; }
+.oslo-pin { display:grid; gap:3px; min-width:78px; padding:6px 9px; border-radius:13px; background:rgba(255,255,255,.94); color:#1b3038; box-shadow:0 5px 14px rgba(10,31,40,.24); font-size:10px; }
+.oslo-pin span { max-width:130px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.oslo-pin--me{background:#264653;color:#fff}
+.oslo-landmark { display:grid; padding:4px; border-radius:11px; background:#fff; box-shadow:0 5px 14px rgba(10,31,40,.24); }.oslo-landmark span{font-size:21px}.oslo-landmark small{font-size:9px;color:#24434c}
+.oslo-collectible { display:grid; place-items:center; width:34px; height:34px; border:2px solid #fff; border-radius:50%; background:#e9c46a; font-size:18px; }
+.oslo-map-tile-warning { position:absolute; left:50%; bottom:16px; z-index:1200; transform:translateX(-50%); border-radius:12px; padding:8px 12px; background:rgba(57,43,18,.92); color:#fff9dc; font-size:12px; }

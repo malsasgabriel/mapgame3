@@ -80,12 +80,18 @@ create table if not exists public.landmarks (
   lng float8
 );
 insert into public.landmarks (id,name,emoji,x,y,lat,lng) values
-('opera','Opera House','🎭',1380,1220,59.9075,10.7528),
-('palace','Royal Palace','🏰',620,520,59.9170,10.7276),
-('vigeland','Vigeland Park','🌳',380,680,59.927,10.700),
-('akershus','Akershus Fortress','⚔️',1020,1020,59.907,10.737),
-('akerbrygge','Aker Brygge','⛵',800,1100,59.908,10.722),
-('karljohan','Karl Johan Gate','🛍️',900,780,59.913,10.739),
-('holmenkollen','Holmenkollen','⛷️',420,220,59.963,10.668),
-('gruner','Grünerløkka','☕',1280,580,59.923,10.757)
-on conflict (id) do nothing;
+('opera','Opera House','🎭',1594,1406,59.9075,10.7528),
+('palace','Royal Palace','🏰',1291,1193,59.9170,10.7276),
+('vigeland','Vigeland Park','🌳',960,968,59.927,10.700),
+('akershus','Akershus Fortress','⚔️',1404,1418,59.907,10.737),
+('akerbrygge','Aker Brygge','⛵',1224,1395,59.908,10.722),
+('karljohan','Karl Johan Gate','🛍️',1428,1283,59.913,10.739),
+('holmenkollen','Holmenkollen','⛷️',576,158,59.963,10.668),
+('gruner','Grünerløkka','☕',1644,1058,59.923,10.757)
+on conflict (id) do update set
+  name = excluded.name,
+  emoji = excluded.emoji,
+  x = excluded.x,
+  y = excluded.y,
+  lat = excluded.lat,
+  lng = excluded.lng;

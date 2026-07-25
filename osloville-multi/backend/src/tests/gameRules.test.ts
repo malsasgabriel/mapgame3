@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { BuyShopItem } from '../domain/use-cases/BuyShopItem';
 import { MovePlayer } from '../domain/use-cases/MovePlayer';
-import { getWorldCollectibles } from '../domain/world';
+import { getWorldCollectibles, WORLD_LANDMARKS } from '../domain/world';
 import { MemoryPlayerRepository, makePlayer } from './helpers';
 
 test('movement clamps teleport attempts and derives distance server-side', async () => {
@@ -14,9 +14,9 @@ test('movement clamps teleport attempts and derives distance server-side', async
 });
 
 test('landmarks are discovered only by actual server-side proximity', async () => {
-  const repo = new MemoryPlayerRepository([makePlayer({ x: 620, y: 520, discovered: [] })]);
+  const repo = new MemoryPlayerRepository([makePlayer({ x: 1291, y: 1193, discovered: [] })]);
   const result = await new MovePlayer(repo).execute({
-    id: 'test-player', x: 620, y: 520,
+    id: 'test-player', x: 1291, y: 1193,
     // A malicious browser may claim any landmark; this payload is ignored.
     discovered: ['holmenkollen', 'gruner'],
   });
@@ -25,6 +25,8 @@ test('landmarks are discovered only by actual server-side proximity', async () =
   assert.deepEqual(result.player.discovered, ['palace']);
   assert.equal(result.player.coins, 1270);
   assert.equal(result.player.xp, 670);
+  assert.ok(Math.abs(result.player.lat - 59.917) < 0.001);
+  assert.ok(Math.abs(result.player.lng - 10.7276) < 0.001);
 });
 
 test('shop catalog is authoritative and an owned item equips without a second charge', async () => {
@@ -39,6 +41,15 @@ test('shop catalog is authoritative and an owned item equips without a second ch
   assert.ok(equipped);
   assert.equal(equipped.player.coins, 380);
   await assert.rejects(() => shop.execute({ playerId: 'test-player', itemId: 'forged_free_crown' }), /UNKNOWN_SHOP_ITEM/);
+});
+
+test('real Oslo landmark coordinates stay aligned with the map projection', () => {
+  assert.deepEqual(WORLD_LANDMARKS, [
+    { id: 'opera', x: 1594, y: 1406 }, { id: 'palace', x: 1291, y: 1193 },
+    { id: 'vigeland', x: 960, y: 968 }, { id: 'akershus', x: 1404, y: 1418 },
+    { id: 'akerbrygge', x: 1224, y: 1395 }, { id: 'karljohan', x: 1428, y: 1283 },
+    { id: 'holmenkollen', x: 576, y: 158 }, { id: 'gruner', x: 1644, y: 1058 },
+  ]);
 });
 
 test('daily world generation is deterministic and bounded', () => {

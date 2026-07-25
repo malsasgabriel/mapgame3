@@ -3,9 +3,9 @@ import { Lang } from './i18n';
 // Rule-based NPC conversations stay local/offline and are authored in both
 // supported game languages. Player text may still contain Norwegian keywords.
 export const NPCS = [
-  { id: 'barista', name: 'Lars the Barista', emoji: '☕', x: 1280, y: 580, district: 'gruner', personality: 'cozy coffee nerd' },
-  { id: 'opera', name: 'Ingrid the Singer', emoji: '🎤', x: 1380, y: 1220, district: 'opera', personality: 'dramatic opera singer' },
-  { id: 'ski', name: 'Olav the Instructor', emoji: '⛷️', x: 420, y: 220, district: 'holmenkollen', personality: 'energetic ski instructor' },
+  { id: 'barista', name: 'Lars the Barista', emoji: '☕', x: 1644, y: 1058, district: 'gruner', personality: 'cozy coffee nerd' },
+  { id: 'opera', name: 'Ingrid the Singer', emoji: '🎤', x: 1594, y: 1406, district: 'opera', personality: 'dramatic opera singer' },
+  { id: 'ski', name: 'Olav the Instructor', emoji: '⛷️', x: 576, y: 158, district: 'holmenkollen', personality: 'energetic ski instructor' },
 ] as const;
 
 const LINES = {

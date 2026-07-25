@@ -53,8 +53,8 @@ export class MovePlayer {
     const distance = Math.hypot(targetX - player.x, targetY - player.y);
     player.x = targetX;
     player.y = targetY;
-    player.lng = 10.68 + (player.x / 2400) * 0.12;
-    player.lat = 59.965 - (player.y / 1800) * 0.08;
+    player.lng = 10.62 + (player.x / 2400) * 0.20;
+    player.lat = 59.97 - (player.y / 1800) * 0.08;
     player.walkKm += distance / PIXELS_PER_KM;
 
     if (typeof params.status === 'string') player.status = params.status.trim().slice(0, MAX_STATUS_LENGTH);

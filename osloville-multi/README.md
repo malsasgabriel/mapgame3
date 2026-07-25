@@ -2,6 +2,8 @@
 
 **For real-time professional tester sessions:** read [PLAYTEST.md](PLAYTEST.md). It includes the live bug-report queue and the three-client automated QA gate. The completed 10-round senior review is documented in [SENIOR_GD_REVIEW.md](SENIOR_GD_REVIEW.md). EN/RU localization rules and the QA checklist live in [LOCALIZATION.md](LOCALIZATION.md).
 
+The live, tile-based map is documented in [REAL_MAP.md](REAL_MAP.md).
+
 OsloVille is a FarmVille-style cozy social map game centered on **real Oslo** with real-time multiplayer coordination, persistent player statistics, dynamic weather, custom cosmetics, and local/Google authentication.
 
 This version replaces the cloud-dependent Supabase backend with a fully self-hosted, Dockerized architecture suitable for native WSL execution.

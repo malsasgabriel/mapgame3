@@ -1,7 +1,7 @@
 'use client';
+import dynamic from 'next/dynamic';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { socket, getBackendUrl } from '@/lib/socket';
-import { PerformanceMonitor } from '@/lib/performance';
 import { audio } from '@/lib/audioEngine';
 import { getDistrictForPosition } from '@/lib/districts';
 import { getDailyShop, coinPopAnimation } from '@/lib/economy';
@@ -9,22 +9,24 @@ import { fetchOsloWeather, OsloWeather } from '@/lib/weather';
 import { findPath } from '@/lib/pathfinding';
 import { xpToLevel, BADGES, SEASON_1 } from '@/lib/progression';
 import { t, Lang, detectLang, localeFor, weatherLabel } from '@/lib/i18n';
+import { xyToLatLng } from '@/lib/geo';
 import { track, getFunnel } from '@/lib/analytics';
 import { screenShake, popScale, slowMo } from '@/lib/juice';
 import { getNpcResponse, getNearbyNpc, NPCS } from '@/lib/aiNpcs';
-import { ParallaxWorld } from './components/ParallaxWorld';
 import { MobileJoystick } from './components/MobileJoystick';
+
+const RealOsloMap = dynamic(() => import('./components/RealOsloMap').then(module => module.RealOsloMap), { ssr: false });
 
 const MAP_SIZE = { w: 2400, h: 1800 };
 const LANDMARKS = [
-  { id: 'opera', name: 'Opera House', emoji: '🎭', x: 1380, y: 1220, lat: 59.9075, lng: 10.7528, desc: 'Walk on the roof!' },
-  { id: 'palace', name: 'Royal Palace', emoji: '🏰', x: 620, y: 520, lat: 59.9170, lng: 10.7276, desc: 'Guard change noon' },
-  { id: 'vigeland', name: 'Vigeland Park', emoji: '🌳', x: 380, y: 680, lat: 59.927, lng: 10.7, desc: '212 sculptures' },
-  { id: 'akershus', name: 'Akershus Fortress', emoji: '⚔️', x: 1020, y: 1020, lat: 59.907, lng: 10.737, desc: 'Castle & history' },
-  { id: 'akerbrygge', name: 'Aker Brygge', emoji: '⛵', x: 800, y: 1100, lat: 59.908, lng: 10.722, desc: 'Fjord promenade' },
-  { id: 'karljohan', name: 'Karl Johan Gate', emoji: '🛍️', x: 900, y: 780, lat: 59.913, lng: 10.739, desc: 'Main street buzz' },
-  { id: 'holmenkollen', name: 'Holmenkollen', emoji: '⛷️', x: 420, y: 220, lat: 59.963, lng: 10.668, desc: 'Epic ski jump!' },
-  { id: 'gruner', name: 'Grünerløkka', emoji: '☕', x: 1280, y: 580, lat: 59.923, lng: 10.757, desc: 'Hip coffee district' },
+  { id: 'opera', name: 'Opera House', emoji: '🎭', x: 1594, y: 1406, lat: 59.9075, lng: 10.7528, desc: 'Walk on the roof!' },
+  { id: 'palace', name: 'Royal Palace', emoji: '🏰', x: 1291, y: 1193, lat: 59.9170, lng: 10.7276, desc: 'Guard change noon' },
+  { id: 'vigeland', name: 'Vigeland Park', emoji: '🌳', x: 960, y: 968, lat: 59.927, lng: 10.7, desc: '212 sculptures' },
+  { id: 'akershus', name: 'Akershus Fortress', emoji: '⚔️', x: 1404, y: 1418, lat: 59.907, lng: 10.737, desc: 'Castle & history' },
+  { id: 'akerbrygge', name: 'Aker Brygge', emoji: '⛵', x: 1224, y: 1395, lat: 59.908, lng: 10.722, desc: 'Fjord promenade' },
+  { id: 'karljohan', name: 'Karl Johan Gate', emoji: '🛍️', x: 1428, y: 1283, lat: 59.913, lng: 10.739, desc: 'Main street buzz' },
+  { id: 'holmenkollen', name: 'Holmenkollen', emoji: '⛷️', x: 576, y: 158, lat: 59.963, lng: 10.668, desc: 'Epic ski jump!' },
+  { id: 'gruner', name: 'Grünerløkka', emoji: '☕', x: 1644, y: 1058, lat: 59.923, lng: 10.757, desc: 'Hip coffee district' },
 ];
 const MOCK_NAMES = [
   { name: 'Ingrid Ø.', statusKey: 'bot.ingrid', color: '#FF8FA3' },
@@ -134,9 +136,8 @@ export default function Page() {
   const [coinCount, setCoinCount] = useState(1240);
   const [xp, setXp] = useState(620);
   const [walkKm, setWalkKm] = useState(2.4);
-  const [mapOffset, setMapOffset] = useState({ x: -700, y: -500 });
-  const [mapScale, setMapScale] = useState(0.92);
-  const [useRealMap, setUseRealMap] = useState(false);
+  const [mapZoomRequest, setMapZoomRequest] = useState(0);
+  const [mapFocus, setMapFocus] = useState<{ x: number; y: number; nonce: number }>({ x: 0, y: 0, nonce: 0 });
   const [nightMode, setNightMode] = useState(false);
   const [snowEnabled, setSnowEnabled] = useState(false);
   const [showLogin, setShowLogin] = useState(true);
@@ -197,9 +198,6 @@ export default function Page() {
       return null;
     }
   };
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0, offX: 0, offY: 0 });
-  const [hasDragged, setHasDragged] = useState(false);
   const [pathPreview, setPathPreview] = useState<{x:number,y:number}[]>([]);
   const [nearbyNpc, setNearbyNpc] = useState<(typeof NPCS)[number] | null>(null);
   const [levelUpShow, setLevelUpShow] = useState<{from:number,to:number}|null>(null);
@@ -208,7 +206,6 @@ export default function Page() {
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const snowCanvasRef = useRef<HTMLCanvasElement>(null);
-  const [viewportSize, setViewportSize] = useState({ w: 0, h: 0 });
   const lastSyncRef = useRef(0);
   const pathQueueRef = useRef<{x:number,y:number}[]>([]);
   const sessionRef = useRef<{ id: string; name: string; email: string | null; avatarUrl: string; googleToken?: string } | null>(null);
@@ -230,23 +227,6 @@ export default function Page() {
   }, [lang]);
   useEffect(() => { questsRef.current = quests; }, [quests]);
   useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
-
-  // Performance monitor
-  useEffect(() => {
-    const monitor = new PerformanceMonitor(setFps);
-    return () => monitor.stop();
-  }, []);
-
-  // Keep culling bounds in sync without listening to every mouse move.
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const update = () => setViewportSize({ w: viewport.clientWidth, h: viewport.clientHeight });
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(viewport);
-    return () => observer.disconnect();
-  }, [showLogin]);
 
   // Loading
   useEffect(() => {
@@ -524,8 +504,7 @@ export default function Page() {
     if (now - lastSyncRef.current < 250) return;
     lastSyncRef.current = now;
 
-    const lat = 59.965 - (currentUser.y / MAP_SIZE.h) * 0.08;
-    const lng = 10.68 + (currentUser.x / MAP_SIZE.w) * 0.12;
+    const { lat, lng } = xyToLatLng(currentUser.x, currentUser.y);
 
     socket.emit('move', {
       x: currentUser.x,
@@ -741,27 +720,6 @@ export default function Page() {
     moveTo(currentUser.x + direction.x * 140, currentUser.y + direction.y * 140, false);
   };
 
-  const onMouseDown=(e:React.MouseEvent)=>{
-    if ((e.target as HTMLElement).closest('.player-pin, .collectible, .landmark-dot')) return;
-    setIsDragging(true); setHasDragged(false); setDragStart({ x:e.clientX, y:e.clientY, offX:mapOffset.x, offY:mapOffset.y });
-  };
-  const onMouseMove=useCallback((e:MouseEvent)=>{
-    if (!isDragging) return;
-    const dx=e.clientX-dragStart.x, dy=e.clientY-dragStart.y;
-    if (Math.abs(dx)>3||Math.abs(dy)>3) setHasDragged(true);
-    setMapOffset({ x:dragStart.offX+dx, y:dragStart.offY+dy });
-  },[isDragging,dragStart]);
-  const onMouseUp=useCallback((e:MouseEvent)=>{
-    if (!isDragging) return; setIsDragging(false);
-    if (!hasDragged && viewportRef.current) {
-      const rect=viewportRef.current.getBoundingClientRect();
-      const mx=(e.clientX-rect.left-mapOffset.x)/mapScale; const my=(e.clientY-rect.top-mapOffset.y)/mapScale;
-      moveTo(mx,my,true);
-    }
-  },[isDragging,hasDragged,mapOffset,mapScale,moveTo]);
-
-  useEffect(()=>{ window.addEventListener('mousemove',onMouseMove); window.addEventListener('mouseup',onMouseUp); return()=>{ window.removeEventListener('mousemove',onMouseMove); window.removeEventListener('mouseup',onMouseUp); }; },[onMouseMove,onMouseUp]);
-
   const sendChat = () => {
     if (!chatInput.trim() || !currentUser) return;
     const text = chatInput.trim().slice(0, 80);
@@ -825,9 +783,9 @@ export default function Page() {
 
   const dailyShop = getDailyShop(SHOP_ITEMS);
   const worldPlayers = currentUser ? [currentUser, ...players] : players;
-  const visiblePlayers = viewportSize.w > 0
-    ? PerformanceMonitor.cullPlayers(worldPlayers, mapOffset, mapScale, viewportSize)
-    : worldPlayers;
+  const focusMap = useCallback((x: number, y: number) => {
+    setMapFocus(previous => ({ x, y, nonce: previous.nonce + 1 }));
+  }, []);
   const district = currentUser ? getDistrictForPosition(currentUser.x, currentUser.y) : null;
   const districtLabel = district ? t(`district.${district.id}`, lang) : '';
   const currentWeatherLabel = weatherLabel(weather?.desc, lang);
@@ -921,7 +879,7 @@ export default function Page() {
           <button onClick={()=>setShowBag(true)} aria-label={t('controls.bag', lang)} title={t('controls.bag', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>🎒</button>
           <button onClick={()=>setShowPhoto(true)} aria-label={t('controls.photo', lang)} title={t('controls.photo', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>📸</button>
           <button onClick={()=>setShowFeedback(true)} aria-label={t('controls.feedback', lang)} title={t('controls.feedback', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'#fff8df' }}>🐞</button>
-          <button onClick={()=>setUseRealMap(v=>!v)} aria-label={t('controls.map', lang)} title={t('controls.map', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>{useRealMap?'🎨':'🗺️'}</button>
+          <button onClick={() => { if (currentUser) focusMap(currentUser.x, currentUser.y); }} aria-label={t('controls.map', lang)} title={t('controls.map', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>🗺️</button>
           <button onClick={() => setNightMode(value => { const next = !value; if (next) advanceQuest('q4'); return next; })} aria-label={t('controls.night', lang)} title={t('controls.night', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>{nightMode?'☀️':'🌙'}</button>
           <button onClick={()=>setSnowEnabled(v=>!v)} aria-label={t('controls.snow', lang)} title={t('controls.snow', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>❄️</button>
           <button onClick={toggleLanguage} aria-label={t('controls.language', lang)} title={t('controls.language', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>{lang === 'en' ? '🇷🇺' : '🇬🇧'}</button>
@@ -945,7 +903,7 @@ export default function Page() {
           <h3 style={{ fontSize:11, letterSpacing:'.12em', color:'#8aa0ad', margin:'16px 0 12px' }}>{t('landmarks.title', lang)} · {discovered.size}/{LANDMARKS.length} · {t('landmarks.badges', lang, { count: badges.length })}</h3>
           <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
             {LANDMARKS.map(l=>(
-              <div key={l.id} onClick={()=>{ const rect=viewportRef.current?.getBoundingClientRect(); if(rect){ setMapOffset({ x:rect.width/2-l.x*mapScale, y:rect.height/2-l.y*mapScale }); } moveTo(l.x,l.y,true); }} style={{ display:'flex', gap:10, padding:8, borderRadius:12, background: discovered.has(l.id)? 'linear-gradient(180deg,#f2fcf7,#e8f7f0)':'linear-gradient(180deg, white, #f8fdfc)', border:`1px solid ${discovered.has(l.id)?'#b5e6d3':'#e1ecea'}`, cursor:'pointer' }}>
+              <div key={l.id} onClick={() => { focusMap(l.x, l.y); moveTo(l.x, l.y, true); }} style={{ display:'flex', gap:10, padding:8, borderRadius:12, background: discovered.has(l.id)? 'linear-gradient(180deg,#f2fcf7,#e8f7f0)':'linear-gradient(180deg, white, #f8fdfc)', border:`1px solid ${discovered.has(l.id)?'#b5e6d3':'#e1ecea'}`, cursor:'pointer' }}>
                 <div style={{ width:36, height:36, borderRadius:10, background:'#e6f4f2', display:'grid', placeItems:'center' }}>{l.emoji}</div><div><b style={{ fontSize:12 }}>{t(`landmark.${l.id}.name`, lang)} {discovered.has(l.id)?'✓':''}</b><br /><small style={{ fontSize:11, color:'#7b8f99' }}>{t(`landmark.${l.id}.desc`, lang)}</small></div>
               </div>
             ))}
@@ -954,41 +912,35 @@ export default function Page() {
           <div style={{ marginTop:12, background:'#fffbe0', border:'1px solid #f5d77a', borderRadius:12, padding:10, fontSize:11 }}><b>{t('season.title', lang, { name: SEASON_1.name })}</b><br />{t('season.tier', lang, { level: lvlCalc })} {SEASON_1.tiers[lvlCalc-1]?.reward.emoji||'🪙'} {SEASON_1.tiers[lvlCalc-1]?.reward.name||''}</div>
         </aside>
 
-        <main ref={viewportRef} className="map-viewport" tabIndex={0} role="application" aria-label={t('map.aria', lang)} onKeyDown={onMapKeyDown} onMouseDown={onMouseDown} style={{ flex:1, position:'relative', background:'linear-gradient(180deg,#d8eef5,#fefae0)', overflow:'hidden', cursor:'grab' }}>
-          <div style={{ position:'absolute', left:14, top:14, zIndex:5, display:'flex', flexDirection:'column', gap:6 }}>
-            <button onClick={()=>setMapScale(s=>Math.min(1.8,s+0.15))} aria-label={t('map.zoomIn', lang)} title={t('map.zoomIn', lang)} style={{ width:40, height:40, borderRadius:12, background:'rgba(255,255,255,0.92)' }}>+</button>
-            <button onClick={()=>setMapScale(s=>Math.max(0.45,s-0.15))} aria-label={t('map.zoomOut', lang)} title={t('map.zoomOut', lang)} style={{ width:40, height:40, borderRadius:12, background:'rgba(255,255,255,0.92)' }}>−</button>
-            <button onClick={()=>{ if(currentUser){ const rect=viewportRef.current?.getBoundingClientRect(); if(rect) setMapOffset({ x:rect.width/2-currentUser.x*mapScale, y:rect.height/2-currentUser.y*mapScale }); } }} aria-label={t('map.center', lang)} title={t('map.center', lang)} style={{ width:40, height:40, borderRadius:12, background:'rgba(255,255,255,0.92)' }}>◎</button>
+        <main ref={viewportRef} className="map-viewport" tabIndex={0} role="application" aria-label={t('map.aria', lang)} onKeyDown={onMapKeyDown} style={{ flex:1, position:'relative', background:'#dcebf0', overflow:'hidden' }}>
+          <div style={{ position:'absolute', left:14, top:14, zIndex:1000, display:'flex', flexDirection:'column', gap:6 }}>
+            <button onClick={() => setMapZoomRequest(value => value + 1)} aria-label={t('map.zoomIn', lang)} title={t('map.zoomIn', lang)} style={{ width:40, height:40, borderRadius:12, background:'rgba(255,255,255,0.92)' }}>+</button>
+            <button onClick={() => setMapZoomRequest(value => value - 1)} aria-label={t('map.zoomOut', lang)} title={t('map.zoomOut', lang)} style={{ width:40, height:40, borderRadius:12, background:'rgba(255,255,255,0.92)' }}>−</button>
+            <button onClick={() => { if (currentUser) focusMap(currentUser.x, currentUser.y); }} aria-label={t('map.center', lang)} title={t('map.center', lang)} style={{ width:40, height:40, borderRadius:12, background:'rgba(255,255,255,0.92)' }}>◎</button>
           </div>
-          <div style={{ position:'absolute', left:'50%', top:14, transform:'translateX(-50%)', zIndex:4, background:'rgba(38,70,83,0.86)', color:'white', padding:'6px 14px', borderRadius:999, fontSize:11, fontWeight:600 }}>{t('hud.mapHint', lang)} · {fps} FPS · {districtLabel}</div>
-          <canvas ref={snowCanvasRef} style={{ position:'absolute', inset:0, zIndex:4, pointerEvents:'none', opacity:snowEnabled?1:0 }} />
-          {nightMode && <div style={{ position:'absolute', inset:0, zIndex:3, background:'radial-gradient(70% 60% at 50% 20%, rgba(80,120,255,0.18), rgba(10,15,35,0.55))', pointerEvents:'none' }}><div style={{ position:'absolute', inset:0, backgroundImage:"url('/assets/aurora.jpg')", backgroundSize:'cover', mixBlendMode:'overlay', opacity:0.25 }}></div></div>}
-          <ParallaxWorld offset={mapOffset} scale={mapScale} />
-          <div style={{ position:'absolute', left:0, top:0, width:MAP_SIZE.w, height:MAP_SIZE.h, backgroundImage: useRealMap ? "url('/assets/districts.jpg')" : "url('/assets/map.jpg')", backgroundSize:'cover', borderRadius:24, boxShadow:'0 20px 80px rgba(0,0,0,0.18)', transformOrigin:'0 0', transform:`translate(${mapOffset.x}px,${mapOffset.y}px) scale(${mapScale})`, willChange:'transform' }}>
-            {/* Path preview */}
-            {pathPreview.length>1 && <svg width={MAP_SIZE.w} height={MAP_SIZE.h} style={{ position:'absolute', left:0, top:0, pointerEvents:'none' }}><path d={`M ${pathPreview.map(p=>`${p.x} ${p.y}`).join(' L ')}`} stroke="rgba(38,70,83,0.25)" strokeWidth="4" strokeDasharray="10 8" fill="none" strokeLinecap="round" /></svg>}
-            {collectibles.filter(c=>!c.collected).map(c=>(
-              <div key={c.id} className="collectible" onClick={e => { e.stopPropagation(); moveTo(c.x, c.y, true); }} style={{ position:'absolute', left:c.x, top:c.y, width:42, height:42, borderRadius:'50%', background:'radial-gradient(120% 120% at 30% 20%, #fff7c2, #e9c46a)', border:'2px solid white', boxShadow:'0 6px 16px rgba(233,196,106,0.5)', display:'grid', placeItems:'center', fontSize:20, transform:'translate(-50%,-50%)', cursor:'pointer', animation:'coinFloat 3s ease-in-out infinite' }}>{c.icon}</div>
-            ))}
-            {LANDMARKS.map(l=>(
-              <div key={l.id} className="landmark-dot" onClick={e=>{ e.stopPropagation(); const rect=viewportRef.current?.getBoundingClientRect(); if(rect){ setMapOffset({ x:rect.width/2-l.x*mapScale, y:rect.height/2-l.y*mapScale }); } moveTo(l.x,l.y,true); }} style={{ position:'absolute', left:l.x, top:l.y, width:58, height:58, borderRadius:18, background:'white', border:'2px solid white', boxShadow:'0 8px 24px rgba(0,0,0,0.16)', display:'grid', placeItems:'center', fontSize:26, transform:'translate(-50%,-50%)', cursor:'pointer' }}>{l.emoji}</div>
-            ))}
-            {NPCS.map(npc=>(
-              <div key={npc.id} style={{ position:'absolute', left:npc.x, top:npc.y-70, transform:'translate(-50%,-100%)', background:'rgba(38,70,83,0.9)', color:'white', padding:'4px 8px', borderRadius:999, fontSize:10, fontWeight:600, pointerEvents:'none' }}>{npc.name} {npc.emoji}</div>
-            ))}
-            {visiblePlayers.map(p => (
-              <div key={p.id} className="player-pin" data-id={p.id} onClick={e=>{ e.stopPropagation(); setShowPlayerModal(p); }} style={{ position:'absolute', left:p.x, top:p.y, transform:'translate(-50%,-100%)', display:'flex', flexDirection:'column', alignItems:'center', cursor:'pointer', zIndex:p.id===currentUser?.id?10:2 }}>
-                <div style={{ background:p.id===currentUser?.id?'#264653':'white', color:p.id===currentUser?.id?'white':'#1a2a33', padding:'6px 12px', borderRadius:'18px 18px 18px 4px', fontSize:12, fontWeight:600, boxShadow:'0 6px 18px rgba(0,0,0,0.14)', maxWidth:180, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', marginBottom:8, animation:'bubbleIn .3s ease' }}>{p.status||''}</div>
-                <div className="avatar-wrap" style={{ position:'relative', width:56, height:56 }}>
-                  <img src={avatarOf(p)} style={{ width:p.id===currentUser?.id?62:56, height:p.id===currentUser?.id?62:56, borderRadius:'50%', border:`3px solid ${p.id===currentUser?.id?customColor:(p.color||'white')}`, boxShadow:'0 6px 18px rgba(0,0,0,0.18)', objectFit:'cover', animation: p.moving ? 'walkBob 0.4s ease-in-out infinite' : 'breathe 2s ease-in-out infinite' }} alt="" />
-                  <div style={{ position:'absolute', left:'50%', top:-10, transform:'translateX(-50%)', fontSize:26, filter:'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }}>{p.id===currentUser?.id?customHat:p.hat}</div>
-                  <div style={{ position:'absolute', right:-6, bottom:2, fontSize:16, background:'white', borderRadius:'50%', width:22, height:22, display:'grid', placeItems:'center', boxShadow:'0 2px 6px rgba(0,0,0,0.15)' }}>{p.id===currentUser?.id?customAcc:p.acc}</div>
-                </div>
-                <div style={{ marginTop:6, background:p.id===currentUser?.id?'#264653':'rgba(255,255,255,0.92)', color:p.id===currentUser?.id?'white':'#1a2a33', padding:'2px 8px', borderRadius:999, fontSize:10, fontWeight:700 }}>{p.name.split(' ')[0]}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{ position:'absolute', right:14, top:14, zIndex:4, background:'rgba(255,255,255,0.92)', padding:'6px 12px', borderRadius:999, fontSize:11, fontWeight:600 }}>{weather ? `${weather.isSnow?'❄️': weather.isRain?'🌧️':'☀️'} ${t('hud.oslo', lang)} · ${weather.temp}°C · ${currentWeatherLabel}` : t('hud.oslo', lang)} · {levelUpShow ? `${t('hud.levelUp', lang)} ${levelUpShow.from}→${levelUpShow.to}` : `${districtLabel} · ${nightMode ? t('hud.nightOn', lang) : t('hud.nightOff', lang)}`}</div>
+          <div style={{ position:'absolute', left:'50%', top:14, transform:'translateX(-50%)', zIndex:1000, background:'rgba(38,70,83,0.86)', color:'white', padding:'6px 14px', borderRadius:999, fontSize:11, fontWeight:600 }}>{t('hud.mapHint', lang)} · {fps} FPS · {districtLabel}</div>
+          <canvas ref={snowCanvasRef} style={{ position:'absolute', inset:0, zIndex:900, pointerEvents:'none', opacity:snowEnabled?1:0 }} />
+          {nightMode && <div style={{ position:'absolute', inset:0, zIndex:800, background:'radial-gradient(70% 60% at 50% 20%, rgba(80,120,255,0.18), rgba(10,15,35,0.55))', pointerEvents:'none' }}><div style={{ position:'absolute', inset:0, backgroundImage:"url('/assets/aurora.jpg')", backgroundSize:'cover', mixBlendMode:'overlay', opacity:0.25 }}></div></div>}
+          <RealOsloMap
+            players={worldPlayers}
+            currentPlayerId={currentUser?.id}
+            landmarks={LANDMARKS.map(landmark => ({ ...landmark, name: t(`landmark.${landmark.id}.name`, lang) }))}
+            collectibles={collectibles}
+            path={pathPreview}
+            nightMode={nightMode}
+            tileFailureLabel={t('map.tilesUnavailable', lang)}
+            focus={mapFocus}
+            zoomRequest={mapZoomRequest}
+            onNavigate={(x, y) => moveTo(x, y, true)}
+            onSelectPlayer={playerId => { const player = worldPlayers.find(entry => entry.id === playerId); if (player) setShowPlayerModal(player); }}
+            onLandmarkClick={landmarkId => {
+              const landmark = LANDMARKS.find(entry => entry.id === landmarkId);
+              if (!landmark) return;
+              focusMap(landmark.x, landmark.y);
+              moveTo(landmark.x, landmark.y, true);
+            }}
+          />
+          <div style={{ position:'absolute', right:14, top:14, zIndex:1000, background:'rgba(255,255,255,0.92)', padding:'6px 12px', borderRadius:999, fontSize:11, fontWeight:600 }}>{weather ? `${weather.isSnow?'❄️': weather.isRain?'🌧️':'☀️'} ${t('hud.oslo', lang)} · ${weather.temp}°C · ${currentWeatherLabel}` : t('hud.oslo', lang)} · {levelUpShow ? `${t('hud.levelUp', lang)} ${levelUpShow.from}→${levelUpShow.to}` : `${districtLabel} · ${nightMode ? t('hud.nightOn', lang) : t('hud.nightOff', lang)}`}</div>
           <MobileJoystick onMove={(dx,dy)=>{ if(!currentUser|| (dx===0&&dy===0)) return; const nx=currentUser.x+dx*8; const ny=currentUser.y+dy*8; setCurrentUser({...currentUser,x:nx,y:ny}); setWalkKm(k=>k+Math.hypot(dx,dy)*0.002); }} />
           {levelUpShow && <div style={{ position:'absolute', left:'50%', top:'40%', transform:'translate(-50%,-50%)', background:'linear-gradient(135deg,#264653,#2A9D8F)', color:'white', padding:'16px 24px', borderRadius:20, fontWeight:800, fontSize:22, zIndex:10, boxShadow:'0 20px 60px rgba(0,0,0,0.3)', animation:'levelUp 0.6s cubic-bezier(.16,1,.3,1)' }}>🎉 {t('hud.levelUp', lang)} {levelUpShow.from} → {levelUpShow.to} 🎉<br /><small style={{ fontSize:12, fontWeight:500 }}>{t('hud.reward', lang)}: {SEASON_1.tiers[levelUpShow.to-1]?.reward.emoji} {SEASON_1.tiers[levelUpShow.to-1]?.reward.name||'+100 🪙'}</small></div>}
           <style>{`@keyframes coinFloat{0%,100%{transform:translate(-50%,-50%) translateY(0)}50%{transform:translate(-50%,-50%) translateY(-6px)}} @keyframes bubbleIn{from{transform:translateY(6px) scale(.9);opacity:0}to{transform:translateY(0) scale(1);opacity:1}} @keyframes walkBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}} @keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.02)}} @keyframes levelUp{from{transform:translate(-50%,-40%) scale(0.8);opacity:0}to{transform:translate(-50%,-50%) scale(1);opacity:1}}`}</style>
@@ -1029,7 +981,7 @@ export default function Page() {
               <div><b style={{ fontSize:18 }}>{showPlayerModal.name}</b><br /><small style={{ color:'#6d818c' }}>{showPlayerModal.status}</small></div>
             </div>
             <div style={{ display:'flex', gap:8 }}>
-              <button onClick={()=>{ setShowPlayerModal(null); const rect=viewportRef.current?.getBoundingClientRect(); if(rect) setMapOffset({ x:rect.width/2-showPlayerModal.x*mapScale, y:rect.height/2-showPlayerModal.y*mapScale }); moveTo(showPlayerModal.x, showPlayerModal.y, true); }} style={{ flex:1, height:40, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>📍 {t('social.visit', lang)}</button>
+              <button onClick={() => { setShowPlayerModal(null); focusMap(showPlayerModal.x, showPlayerModal.y); moveTo(showPlayerModal.x, showPlayerModal.y, true); }} style={{ flex:1, height:40, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>📍 {t('social.visit', lang)}</button>
               <button onClick={() => {
                 setShowPlayerModal(null);
                 if (socket.connected) socket.emit('wave', { targetId: showPlayerModal.id });
