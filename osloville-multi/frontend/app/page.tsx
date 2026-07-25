@@ -783,7 +783,9 @@ export default function Page() {
 
   const dailyShop = getDailyShop(SHOP_ITEMS);
   const worldPlayers = currentUser ? [currentUser, ...players] : players;
-  const focusMap = useCallback((x: number, y: number) => setMapFocus({ x, y, nonce: Date.now() }), []);
+  const focusMap = useCallback((x: number, y: number) => {
+    setMapFocus(previous => ({ x, y, nonce: previous.nonce + 1 }));
+  }, []);
   const district = currentUser ? getDistrictForPosition(currentUser.x, currentUser.y) : null;
   const districtLabel = district ? t(`district.${district.id}`, lang) : '';
   const currentWeatherLabel = weatherLabel(weather?.desc, lang);
@@ -931,7 +933,12 @@ export default function Page() {
             zoomRequest={mapZoomRequest}
             onNavigate={(x, y) => moveTo(x, y, true)}
             onSelectPlayer={playerId => { const player = worldPlayers.find(entry => entry.id === playerId); if (player) setShowPlayerModal(player); }}
-            onLandmarkClick={landmarkId => { const landmark = LANDMARKS.find(entry => entry.id === landmarkId); if (landmark) moveTo(landmark.x, landmark.y, true); }}
+            onLandmarkClick={landmarkId => {
+              const landmark = LANDMARKS.find(entry => entry.id === landmarkId);
+              if (!landmark) return;
+              focusMap(landmark.x, landmark.y);
+              moveTo(landmark.x, landmark.y, true);
+            }}
           />
           <div style={{ position:'absolute', right:14, top:14, zIndex:1000, background:'rgba(255,255,255,0.92)', padding:'6px 12px', borderRadius:999, fontSize:11, fontWeight:600 }}>{weather ? `${weather.isSnow?'❄️': weather.isRain?'🌧️':'☀️'} ${t('hud.oslo', lang)} · ${weather.temp}°C · ${currentWeatherLabel}` : t('hud.oslo', lang)} · {levelUpShow ? `${t('hud.levelUp', lang)} ${levelUpShow.from}→${levelUpShow.to}` : `${districtLabel} · ${nightMode ? t('hud.nightOn', lang) : t('hud.nightOff', lang)}`}</div>
           <MobileJoystick onMove={(dx,dy)=>{ if(!currentUser|| (dx===0&&dy===0)) return; const nx=currentUser.x+dx*8; const ny=currentUser.y+dy*8; setCurrentUser({...currentUser,x:nx,y:ny}); setWalkKm(k=>k+Math.hypot(dx,dy)*0.002); }} />

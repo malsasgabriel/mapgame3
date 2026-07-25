@@ -41,7 +41,11 @@ export function RealOsloMap({ players, currentPlayerId, landmarks, collectibles,
         .on('tileerror', () => setTilesUnavailable(true)).on('tileload', () => setTilesUnavailable(false)).addTo(map);
       map.createPane('game');
       const pane = map.getPane('game'); if (pane) pane.style.zIndex = '650';
-      map.on('click', event => { const point = clampWorldPoint(latLngToXy(event.latlng.lat, event.latlng.lng)); callbacks.current.onNavigate(point.x, point.y); });
+      map.on('click', event => {
+        (containerRef.current?.closest('.map-viewport') as HTMLElement | null)?.focus();
+        const point = clampWorldPoint(latLngToXy(event.latlng.lat, event.latlng.lng));
+        callbacks.current.onNavigate(point.x, point.y);
+      });
       mapRef.current = map; setReady(true);
     });
     return () => { cancelled = true; markersRef.current.clear(); markerSignaturesRef.current.clear(); map?.remove(); mapRef.current = null; leafletRef.current = null; };
