@@ -9,6 +9,7 @@ import { BuyShopItem } from '../../domain/use-cases/BuyShopItem';
 import { getWorldCollectible } from '../../domain/world';
 import { IPlaytestReportRepository } from '../../domain/repositories/IPlaytestReportRepository';
 import { PlaytestSeverity } from '../../domain/entities/PlaytestReport';
+import { IWorldPickupRepository } from '../../domain/repositories/IWorldPickupRepository';
 
 export class SocketController {
   // Map socket IDs to player IDs
@@ -28,8 +29,18 @@ export class SocketController {
   private claimedCollectibles = new Set<string>();
 
   private allowEvent(socket: Socket, event: string, limit: number, intervalMs: number): boolean {
-    const key = `${socket.id}:${event}`;
+    // Once authenticated, limits are keyed by player identity rather than a
+    // transport ID so reconnecting cannot reset a spam/abuse budget.
+    const identity = this.socketToPlayerMap.get(socket.id) || socket.id;
+    const key = `${identity}:${event}`;
     const now = Date.now();
+    if (this.eventWindows.size > 2_000) {
+      for (const [windowKey, timestamps] of this.eventWindows) {
+        const active = timestamps.filter(timestamp => now - timestamp < 60_000);
+        if (active.length) this.eventWindows.set(windowKey, active);
+        else this.eventWindows.delete(windowKey);
+      }
+    }
     const recent = (this.eventWindows.get(key) || []).filter(timestamp => now - timestamp < intervalMs);
     if (recent.length >= limit) {
       this.eventWindows.set(key, recent);
@@ -45,6 +56,7 @@ export class SocketController {
     private playerRepo: IPlayerRepository,
     private chatRepo: IChatRepository,
     private playtestReports: IPlaytestReportRepository,
+    private worldPickups: IWorldPickupRepository,
   ) {
     this.authenticatePlayer = new AuthenticatePlayer(playerRepo);
     this.movePlayer = new MovePlayer(playerRepo);
@@ -112,9 +124,12 @@ export class SocketController {
           otherPlayers,
           chatHistory,
         });
-        // Clients need this snapshot after reconnecting; otherwise an item
-        // collected while their transport was down would visually respawn.
-        socket.emit('world_state', { claimedItemIds: [...this.claimedCollectibles] });
+        // Clients need this snapshot after reconnecting; it is read from the
+        // durable daily claim ledger rather than process-local memory.
+        const day = new Date().toISOString().slice(0, 10);
+        const claimedItemIds = await this.worldPickups.getClaimedItemIds(day);
+        claimedItemIds.forEach(itemId => this.claimedCollectibles.add(`${day}:${itemId}`));
+        socket.emit('world_state', { claimedItemIds });
 
         // Broadcast to other players
         socket.broadcast.emit('player_joined', player);
@@ -139,20 +154,25 @@ export class SocketController {
       if (!playerId || !this.allowEvent(socket, 'move', 12, 1_000)) return;
 
       try {
-        const updatedPlayer = await this.movePlayer.execute({
+        const result = await this.movePlayer.execute({
           id: playerId,
           x: data.x,
           y: data.y,
-          lat: data.lat,
-          lng: data.lng,
-          walkKm: data.walkKm,
           status: data.status,
-          discovered: data.discovered,
         });
 
-        if (updatedPlayer) {
-          // Broadcast movement to all other clients
-          socket.broadcast.emit('player_moved', updatedPlayer);
+        if (result) {
+          // Sender gets authoritative progression, while other clients only
+          // need the updated presence snapshot.
+          socket.emit('hud_update', {
+            coins: result.player.coins,
+            xp: result.player.xp,
+            level: result.player.level,
+          });
+          if (result.discoveries.length) {
+            socket.emit('discovery_unlocked', { landmarkIds: result.discoveries });
+          }
+          socket.broadcast.emit('player_moved', result.player);
         }
       } catch (err) {
         console.error('[Socket.io] Error handling player move:', err);
@@ -201,19 +221,31 @@ export class SocketController {
       const collectible = typeof data.itemId === 'string' ? getWorldCollectible(data.itemId) : null;
       if (!playerId || !collectible || !this.allowEvent(socket, 'collect', 12, 10_000)) return;
 
-      // The same world pickup can only be awarded once per server session.
-      if (this.claimedCollectibles.has(collectible.id)) {
+      const day = new Date().toISOString().slice(0, 10);
+      const claimKey = `${day}:${collectible.id}`;
+      if (this.claimedCollectibles.has(claimKey)) {
         socket.emit('action_rejected', { event: 'collect', code: 'ALREADY_COLLECTED', itemId: collectible.id });
         return;
       }
 
+      let claimedByThisPlayer = false;
       try {
         const player = await this.playerRepo.findById(playerId);
         if (!player || Math.hypot(player.x - collectible.x, player.y - collectible.y) > 190) {
           socket.emit('action_rejected', { event: 'collect', code: 'TOO_FAR_AWAY', itemId: collectible.id });
           return;
         }
-        this.claimedCollectibles.add(collectible.id);
+
+        // The DB unique key is the final arbiter when two players collect in
+        // the same frame, and preserves the result across backend restarts.
+        const claimed = await this.worldPickups.claim(day, collectible.id, playerId);
+        if (!claimed) {
+          this.claimedCollectibles.add(claimKey);
+          socket.emit('action_rejected', { event: 'collect', code: 'ALREADY_COLLECTED', itemId: collectible.id });
+          return;
+        }
+        claimedByThisPlayer = true;
+        this.claimedCollectibles.add(claimKey);
         const result = await this.collectItem.execute({
           playerId,
           itemType: collectible.type,
@@ -232,9 +264,15 @@ export class SocketController {
             itemId: data.itemId,
             collectorId: playerId,
           });
+        } else {
+          await this.worldPickups.release(day, collectible.id);
+          this.claimedCollectibles.delete(claimKey);
         }
       } catch (err) {
-        this.claimedCollectibles.delete(data.itemId);
+        if (claimedByThisPlayer) {
+          this.claimedCollectibles.delete(claimKey);
+          await this.worldPickups.release(day, collectible.id).catch(() => undefined);
+        }
         console.error('[Socket.io] Error collecting item:', err);
       }
     });
@@ -341,6 +379,8 @@ export class SocketController {
 
     // DISCONNECT
     socket.on('disconnect', async () => {
+      // Authenticated player windows deliberately survive a reconnect; only
+      // pre-auth socket windows can be discarded here.
       for (const key of this.eventWindows.keys()) {
         if (key.startsWith(`${socket.id}:`)) this.eventWindows.delete(key);
       }

@@ -108,6 +108,23 @@ type LoginUser = Partial<Player> & { googleToken?: string };
 const avatarOf = (player: Pick<Player, 'avatarUrl' | 'avatar_url' | 'avatar'>) =>
   player.avatarUrl || player.avatar_url || player.avatar || '/assets/characters.png';
 
+const createOfflineBots = (origin: Player | null): Player[] => {
+  const x = origin?.x ?? 1100;
+  const y = origin?.y ?? 850;
+  return MOCK_NAMES.map((bot, index) => ({
+    id: `offline_bot_${index}`,
+    name: bot.name,
+    status: bot.status,
+    avatarUrl: `https://i.pravatar.cc/100?img=${11 + index}`,
+    x: x + (index % 2 === 0 ? -1 : 1) * (180 + index * 36),
+    y: y + (index < 2 ? -1 : 1) * (130 + index * 28),
+    color: bot.color,
+    hat: index % 2 ? '🧶' : '🧢',
+    acc: index % 2 ? '☕' : '🧣',
+    level: 5 + index,
+  }));
+};
+
 export default function Page() {
   const [currentUser, setCurrentUser] = useState<Player | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -245,6 +262,7 @@ export default function Page() {
   useEffect(() => {
     const onConnect = () => {
       setSocketStatus('connected');
+      setPlayers(previous => previous.filter(player => !player.id.startsWith('offline_bot_')));
       // Socket.io reconnects transparently; the game session must be joined
       // again because the backend intentionally forgets disconnected sockets.
       if (sessionRef.current) socket.emit('join', sessionRef.current);
@@ -254,6 +272,9 @@ export default function Page() {
     };
     const onConnectError = () => {
       setSocketStatus('offline');
+      setPlayers(previous => previous.some(player => player.id.startsWith('offline_bot_'))
+        ? previous
+        : [...previous, ...createOfflineBots(currentUserRef.current)]);
     };
 
     const onJoinSuccess = (data: {
@@ -321,6 +342,17 @@ export default function Page() {
     const onHudUpdate = (data: { coins: number; xp: number; level: number }) => {
       setCoinCount(data.coins);
       setXp(data.xp);
+      setCurrentUser(previous => previous ? { ...previous, coins: data.coins, xp: data.xp, level: data.level } : previous);
+    };
+    const onDiscoveryUnlocked = (data: { landmarkIds?: string[] }) => {
+      const landmarkIds = Array.isArray(data.landmarkIds) ? data.landmarkIds : [];
+      if (!landmarkIds.length) return;
+      setDiscovered(previous => new Set([...previous, ...landmarkIds]));
+      landmarkIds.forEach(id => {
+        track('landmark_discover', id);
+        if (id === 'gruner') advanceQuest('q2');
+      });
+      setNotice(`Discovered ${landmarkIds.length > 1 ? `${landmarkIds.length} landmarks` : 'a new landmark'}! +${landmarkIds.length * 30} coins`);
     };
 
     const onShopSuccess = (data: { coins: number; inventory: any; player: any }) => {
@@ -373,6 +405,7 @@ export default function Page() {
     socket.on('item_collected', onItemCollected);
     socket.on('world_state', onWorldState);
     socket.on('hud_update', onHudUpdate);
+    socket.on('discovery_unlocked', onDiscoveryUnlocked);
     socket.on('shop_success', onShopSuccess);
     socket.on('waved_at', onWavedAt);
     socket.on('player_waved', onPlayerWaved);
@@ -398,6 +431,7 @@ export default function Page() {
       socket.off('item_collected', onItemCollected);
       socket.off('world_state', onWorldState);
       socket.off('hud_update', onHudUpdate);
+      socket.off('discovery_unlocked', onDiscoveryUnlocked);
       socket.off('shop_success', onShopSuccess);
       socket.off('waved_at', onWavedAt);
       socket.off('player_waved', onPlayerWaved);
@@ -422,8 +456,9 @@ export default function Page() {
 
     fetch(`${getBackendUrl()}/api/world`)
       .then(response => response.ok ? response.json() : Promise.reject(new Error('World unavailable')))
-      .then((data: { collectibles?: Omit<Collectible, 'collected'>[] }) => {
+      .then((data: { collectibles?: Omit<Collectible, 'collected'>[]; claimedItemIds?: string[] }) => {
         if (!Array.isArray(data.collectibles)) return;
+        (Array.isArray(data.claimedItemIds) ? data.claimedItemIds : []).forEach(itemId => claimedCollectiblesRef.current.add(itemId));
         setCollectibles(data.collectibles.map(item => ({ ...item, collected: claimedCollectiblesRef.current.has(item.id) })));
       })
       .catch(() => undefined);
@@ -661,15 +696,33 @@ export default function Page() {
       .filter(item => !item.collected && Math.hypot(item.x - currentUser.x, item.y - currentUser.y) < 64)
       .forEach(item => collectOne(item));
 
-    LANDMARKS.forEach(landmark => {
-      if (Math.hypot(landmark.x - currentUser.x, landmark.y - currentUser.y) >= 120 || discovered.has(landmark.id)) return;
-      setDiscovered(previous => new Set([...previous, landmark.id]));
-      setXp(value => value + 50);
-      setCoinCount(coins => coins + 30);
-      track('landmark_discover', landmark.id, { x: landmark.x, y: landmark.y });
-      if (landmark.id === 'gruner') advanceQuest('q2');
-    });
+    // In a connected session the server calculates landmark proximity and
+    // rewards. Offline demo mode retains the same loop locally.
+    if (!socket.connected) {
+      LANDMARKS.forEach(landmark => {
+        if (Math.hypot(landmark.x - currentUser.x, landmark.y - currentUser.y) >= 120 || discovered.has(landmark.id)) return;
+        setDiscovered(previous => new Set([...previous, landmark.id]));
+        setXp(value => value + 50);
+        setCoinCount(coins => coins + 30);
+        track('landmark_discover', landmark.id, { x: landmark.x, y: landmark.y });
+        if (landmark.id === 'gruner') advanceQuest('q2');
+      });
+    }
   }, [advanceQuest, collectOne, collectibles, currentUser, discovered]);
+
+  const onMapKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!currentUser || event.altKey || event.ctrlKey || event.metaKey) return;
+    const directions: Record<string, { x: number; y: number }> = {
+      ArrowUp: { x: 0, y: -1 }, w: { x: 0, y: -1 }, W: { x: 0, y: -1 },
+      ArrowDown: { x: 0, y: 1 }, s: { x: 0, y: 1 }, S: { x: 0, y: 1 },
+      ArrowLeft: { x: -1, y: 0 }, a: { x: -1, y: 0 }, A: { x: -1, y: 0 },
+      ArrowRight: { x: 1, y: 0 }, d: { x: 1, y: 0 }, D: { x: 1, y: 0 },
+    };
+    const direction = directions[event.key];
+    if (!direction) return;
+    event.preventDefault();
+    moveTo(currentUser.x + direction.x * 140, currentUser.y + direction.y * 140, false);
+  };
 
   const onMouseDown=(e:React.MouseEvent)=>{
     if ((e.target as HTMLElement).closest('.player-pin, .collectible, .landmark-dot')) return;
@@ -881,7 +934,7 @@ export default function Page() {
           <div style={{ marginTop:12, background:'#fffbe0', border:'1px solid #f5d77a', borderRadius:12, padding:10, fontSize:11 }}><b>Season 1: {SEASON_1.name}</b><br />Tier {lvlCalc}/30 • Next: {SEASON_1.tiers[lvlCalc-1]?.reward.emoji||'🪙'} {SEASON_1.tiers[lvlCalc-1]?.reward.name||''}</div>
         </aside>
 
-        <main ref={viewportRef} onMouseDown={onMouseDown} style={{ flex:1, position:'relative', background:'linear-gradient(180deg,#d8eef5,#fefae0)', overflow:'hidden', cursor:'grab' }}>
+        <main ref={viewportRef} className="map-viewport" tabIndex={0} role="application" aria-label="Oslo game map. Use arrows or W A S D to move." onKeyDown={onMapKeyDown} onMouseDown={onMouseDown} style={{ flex:1, position:'relative', background:'linear-gradient(180deg,#d8eef5,#fefae0)', overflow:'hidden', cursor:'grab' }}>
           <div style={{ position:'absolute', left:14, top:14, zIndex:5, display:'flex', flexDirection:'column', gap:6 }}>
             <button onClick={()=>setMapScale(s=>Math.min(1.8,s+0.15))} style={{ width:40, height:40, borderRadius:12, background:'rgba(255,255,255,0.92)' }}>+</button>
             <button onClick={()=>setMapScale(s=>Math.max(0.45,s-0.15))} style={{ width:40, height:40, borderRadius:12, background:'rgba(255,255,255,0.92)' }}>−</button>
@@ -989,7 +1042,7 @@ export default function Page() {
                       }
                       return;
                     }
-                    if (coinCount < item.price) return alert('Not enough');
+                    if (coinCount < item.price) { setNotice('Not enough coins for this item.'); return; }
                     if (socket.connected) {
                       socket.emit('shop_buy', { itemId: item.id });
                     } else {

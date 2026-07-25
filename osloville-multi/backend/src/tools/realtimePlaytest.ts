@@ -45,6 +45,7 @@ function connect(label: string): Promise<TestClient> {
     });
     socket.on('item_collected', () => events.add('item_collected'));
     socket.on('world_state', () => events.add('world_state'));
+    socket.on('discovery_unlocked', () => events.add('discovery_unlocked'));
     socket.on('chat_message', () => events.add('chat_message'));
     socket.on('hud_update', () => events.add('hud_update'));
     socket.on('shop_success', () => events.add('shop_success'));
@@ -92,6 +93,7 @@ async function run(): Promise<void> {
     alpha.socket.emit('collect', { itemId: world[0].id });
     bravo.socket.emit('collect', { itemId: world[1].id });
     charlie.socket.emit('collect', { itemId: world[2].id });
+    await moveTo(alpha, { id: 'gruner', x: 1280, y: 580 });
     alpha.socket.emit('chat', { id: `qa_chat_${runId}`, text: 'QA swarm: proximity and chat smoke test', x: world[0].x, y: world[0].y });
     alpha.socket.emit('shop_buy', { itemId: 'hat_cap' });
     alpha.socket.emit('playtest_report', {
@@ -116,6 +118,7 @@ async function run(): Promise<void> {
     const assertions = {
       collectionBroadcast: clients.every(client => client.events.has('item_collected')),
       collectorHudUpdated: alpha.events.has('hud_update') && bravo.events.has('hud_update') && charlie.events.has('hud_update'),
+      serverDiscovery: alpha.events.has('discovery_unlocked'),
       chatBroadcast: clients.every(client => client.events.has('chat_message')),
       cosmeticPurchase: alpha.events.has('shop_success'),
       reportQueued: alpha.events.has('playtest_reported'),

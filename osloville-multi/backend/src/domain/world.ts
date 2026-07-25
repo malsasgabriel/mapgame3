@@ -8,6 +8,23 @@ export type WorldCollectible = {
   type: CollectibleType;
 };
 
+export type WorldLandmark = {
+  id: string;
+  x: number;
+  y: number;
+};
+
+export const WORLD_LANDMARKS: readonly WorldLandmark[] = [
+  { id: 'opera', x: 1380, y: 1220 },
+  { id: 'palace', x: 620, y: 520 },
+  { id: 'vigeland', x: 380, y: 680 },
+  { id: 'akershus', x: 1020, y: 1020 },
+  { id: 'akerbrygge', x: 800, y: 1100 },
+  { id: 'karljohan', x: 900, y: 780 },
+  { id: 'holmenkollen', x: 420, y: 220 },
+  { id: 'gruner', x: 1280, y: 580 },
+] as const;
+
 const COLLECTIBLE_TYPES: Array<Pick<WorldCollectible, 'icon' | 'type'>> = [
   { icon: '🪙', type: 'coin' },
   { icon: '💖', type: 'heart' },

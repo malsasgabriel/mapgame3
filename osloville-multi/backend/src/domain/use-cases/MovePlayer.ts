@@ -1,18 +1,20 @@
 import { IPlayerRepository } from '../repositories/IPlayerRepository';
 import { Player } from '../entities/Player';
-import { LANDMARK_IDS } from '../gameCatalog';
+import { WORLD_LANDMARKS } from '../world';
 
 const MAP = { minX: 40, maxX: 2360, minY: 40, maxY: 1760 };
 const MAX_STEP_DISTANCE = 220;
 const PIXELS_PER_KM = 900;
 const MAX_STATUS_LENGTH = 80;
+const LANDMARK_DISCOVERY_RADIUS = 120;
+const LANDMARK_REWARD = { coins: 30, xp: 50 };
 
 export interface MovePlayerParams {
   id: string;
   x: number;
   y: number;
-  // Lat/Lng and walkKm are accepted for backwards compatible clients, but
-  // position-derived values are always authoritative on the server.
+  // Legacy fields are ignored. Position, distance, discovery and reward state
+  // are derived on the authoritative server.
   lat?: number;
   lng?: number;
   walkKm?: number;
@@ -20,12 +22,17 @@ export interface MovePlayerParams {
   discovered?: string[];
 }
 
+export interface MovePlayerResult {
+  player: Player;
+  discoveries: string[];
+}
+
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
 export class MovePlayer {
   constructor(private playerRepo: IPlayerRepository) {}
 
-  async execute(params: MovePlayerParams): Promise<Player | null> {
+  async execute(params: MovePlayerParams): Promise<MovePlayerResult | null> {
     if (!Number.isFinite(params.x) || !Number.isFinite(params.y)) throw new Error('INVALID_POSITION');
 
     const player = await this.playerRepo.findById(params.id);
@@ -35,8 +42,8 @@ export class MovePlayer {
     let targetY = clamp(params.y, MAP.minY, MAP.maxY);
     const requestedDistance = Math.hypot(targetX - player.x, targetY - player.y);
 
-    // A client can send a new movement packet only after a small bounded move.
-    // This makes teleports and client-provided distance awards ineffective.
+    // A client can send only a small bounded move. This makes teleports and
+    // client-provided walk-distance awards ineffective.
     if (requestedDistance > MAX_STEP_DISTANCE) {
       const ratio = MAX_STEP_DISTANCE / requestedDistance;
       targetX = player.x + (targetX - player.x) * ratio;
@@ -51,12 +58,20 @@ export class MovePlayer {
     player.walkKm += distance / PIXELS_PER_KM;
 
     if (typeof params.status === 'string') player.status = params.status.trim().slice(0, MAX_STATUS_LENGTH);
-    if (Array.isArray(params.discovered)) {
-      const validDiscoveries = params.discovered.filter((id): id is string => typeof id === 'string' && LANDMARK_IDS.has(id));
-      player.discovered = Array.from(new Set([...player.discovered, ...validDiscoveries]));
+
+    const discoveries = WORLD_LANDMARKS
+      .filter(landmark => !player.discovered.includes(landmark.id))
+      .filter(landmark => Math.hypot(player.x - landmark.x, player.y - landmark.y) <= LANDMARK_DISCOVERY_RADIUS)
+      .map(landmark => landmark.id);
+
+    if (discoveries.length) {
+      player.discovered = [...player.discovered, ...discoveries];
+      player.coins += discoveries.length * LANDMARK_REWARD.coins;
+      player.xp += discoveries.length * LANDMARK_REWARD.xp;
+      player.level = Math.floor(player.xp / 1000) + 5;
     }
 
     player.updatedAt = new Date();
-    return this.playerRepo.save(player);
+    return { player: await this.playerRepo.save(player), discoveries };
   }
 }

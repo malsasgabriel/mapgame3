@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'crypto';
 import { IPlayerRepository } from '../../domain/repositories/IPlayerRepository';
 import { getWorldCollectibles } from '../../domain/world';
 import { IPlaytestReportRepository } from '../../domain/repositories/IPlaytestReportRepository';
+import { IWorldPickupRepository } from '../../domain/repositories/IWorldPickupRepository';
 
 export class HttpController {
   public router = Router();
@@ -10,6 +11,7 @@ export class HttpController {
   constructor(
     private playerRepo: IPlayerRepository,
     private playtestReports: IPlaytestReportRepository,
+    private worldPickups: IWorldPickupRepository,
   ) {
     this.router.get('/health', this.healthCheck.bind(this));
     this.router.get('/config', this.getConfig.bind(this));
@@ -32,9 +34,16 @@ export class HttpController {
     res.json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '' });
   }
 
-  private getWorld(_req: Request, res: Response) {
-    res.setHeader('Cache-Control', 'public, max-age=300');
-    res.json({ day: new Date().toISOString().slice(0, 10), collectibles: getWorldCollectibles() });
+  private async getWorld(_req: Request, res: Response) {
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      const claimedItemIds = await this.worldPickups.getClaimedItemIds(day);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ day, collectibles: getWorldCollectibles(), claimedItemIds });
+    } catch (err) {
+      console.error('[HTTP] Unable to load world state:', err);
+      res.status(503).json({ error: 'WORLD_UNAVAILABLE' });
+    }
   }
 
   private isAuthorized(req: Request): boolean {

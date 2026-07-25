@@ -12,6 +12,7 @@ button { cursor: pointer; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid #e9c46a; outline-offset: 2px; }
 button:disabled { cursor: not-allowed; opacity: .55; }
 img { display: block; }
+.map-viewport:focus-visible { outline: 3px solid #e9c46a; outline-offset: -3px; }
 
 .mobile-joystick { display: none; }
 

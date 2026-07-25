@@ -27,7 +27,3 @@ export const SHOP_CATALOG: Readonly<Record<string, ShopCatalogItem>> = {
 export function getShopItem(itemId: string): ShopCatalogItem | null {
   return SHOP_CATALOG[itemId] ?? null;
 }
-
-export const LANDMARK_IDS = new Set([
-  'opera', 'palace', 'vigeland', 'akershus', 'akerbrygge', 'karljohan', 'holmenkollen', 'gruner',
-]);

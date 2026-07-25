@@ -59,6 +59,16 @@ const SCHEMA_SQL = `
     created_at TIMESTAMPTZ DEFAULT NOW()
   );
 
+  -- Shared daily world pickup ownership. The primary key makes collection
+  -- atomic even when two sockets reach the same item simultaneously.
+  CREATE TABLE IF NOT EXISTS world_pickup_claims (
+    world_day DATE NOT NULL,
+    item_id VARCHAR(32) NOT NULL,
+    collector_id VARCHAR(100) REFERENCES players(id) ON DELETE SET NULL,
+    claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (world_day, item_id)
+  );
+
   -- Playtest feedback: a durable queue for human test sessions and QA agents.
   CREATE TABLE IF NOT EXISTS playtest_reports (
     id VARCHAR(100) PRIMARY KEY,
