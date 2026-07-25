@@ -3,6 +3,7 @@ import { Server as SocketIoServer } from 'socket.io';
 import { SocketController } from '../../adapters/controllers/SocketController';
 import { NpcSimulateTick } from '../../domain/use-cases/NpcSimulateTick';
 import { IPlayerRepository } from '../../domain/repositories/IPlayerRepository';
+import { allowedOrigins } from './ExpressServer';
 
 export class SocketServer {
   private io: SocketIoServer;
@@ -17,10 +18,11 @@ export class SocketServer {
   ) {
     this.io = new SocketIoServer(httpServer, {
       cors: {
-        origin: '*', // Dynamic CORS handled at proxy level or relaxed for local game clients
-        methods: ['GET', 'POST']
+        origin: allowedOrigins,
+        methods: ['GET', 'POST'],
       },
-      pingTimeout: 60000
+      pingTimeout: 60_000,
+      maxHttpBufferSize: 32 * 1024
     });
     this.socketController = socketController;
     this.socketController.setIo(this.io);

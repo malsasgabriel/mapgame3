@@ -1,37 +1,81 @@
 import { Request, Response, Router } from 'express';
+import { timingSafeEqual } from 'crypto';
 import { IPlayerRepository } from '../../domain/repositories/IPlayerRepository';
+import { getWorldCollectibles } from '../../domain/world';
+import { IPlaytestReportRepository } from '../../domain/repositories/IPlaytestReportRepository';
+import { IWorldPickupRepository } from '../../domain/repositories/IWorldPickupRepository';
 
 export class HttpController {
   public router = Router();
 
-  constructor(private playerRepo: IPlayerRepository) {
+  constructor(
+    private playerRepo: IPlayerRepository,
+    private playtestReports: IPlaytestReportRepository,
+    private worldPickups: IWorldPickupRepository,
+  ) {
     this.router.get('/health', this.healthCheck.bind(this));
     this.router.get('/config', this.getConfig.bind(this));
+    this.router.get('/world', this.getWorld.bind(this));
+    this.router.get('/playtest-reports', this.getPlaytestReports.bind(this));
     this.router.post('/cleanup', this.cleanup.bind(this));
   }
 
-  private healthCheck(req: Request, res: Response) {
-    res.json({ 
-      status: 'ok', 
+  private healthCheck(_req: Request, res: Response) {
+    res.json({
+      status: 'ok',
       service: 'osloville-backend',
-      timestamp: new Date().toISOString() 
+      timestamp: new Date().toISOString(),
     });
   }
 
-  private getConfig(req: Request, res: Response) {
-    res.json({
-      googleClientId: process.env.GOOGLE_CLIENT_ID || '1087815734233-xyz.apps.googleusercontent.com'
-    });
+  private getConfig(_req: Request, res: Response) {
+    // This is a public browser configuration endpoint. A Google OAuth client id
+    // is intentionally public; it is never an OAuth secret.
+    res.json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '' });
+  }
+
+  private async getWorld(_req: Request, res: Response) {
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      const claimedItemIds = await this.worldPickups.getClaimedItemIds(day);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ day, collectibles: getWorldCollectibles(), claimedItemIds });
+    } catch (err) {
+      console.error('[HTTP] Unable to load world state:', err);
+      res.status(503).json({ error: 'WORLD_UNAVAILABLE' });
+    }
+  }
+
+  private isAuthorized(req: Request): boolean {
+    const expected = process.env.ADMIN_API_KEY;
+    const provided = req.header('x-admin-key') || '';
+    if (!expected || !provided || expected.length !== provided.length) return false;
+    return timingSafeEqual(Buffer.from(expected), Buffer.from(provided));
+  }
+
+  private async getPlaytestReports(req: Request, res: Response) {
+    if (!this.isAuthorized(req)) {
+      res.status(404).json({ success: false });
+      return;
+    }
+    const rawLimit = Number(req.query.limit);
+    const reports = await this.playtestReports.getRecent(Number.isFinite(rawLimit) ? rawLimit : 50);
+    res.json({ reports });
   }
 
   private async cleanup(req: Request, res: Response) {
+    if (!this.isAuthorized(req)) {
+      res.status(404).json({ success: false });
+      return;
+    }
+
     try {
       const twoHoursAgo = new Date(Date.now() - 1000 * 60 * 60 * 2);
-      // Retain NPCs, only delete real players inactive for 2+ hours
       await this.playerRepo.deleteOldPlayers(twoHoursAgo);
       res.json({ success: true, message: 'Cleaned up old players' });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unknown cleanup failure';
+      res.status(500).json({ success: false, error: message });
     }
   }
 }

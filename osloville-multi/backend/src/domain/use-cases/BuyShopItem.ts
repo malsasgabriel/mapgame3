@@ -1,56 +1,44 @@
 import { IPlayerRepository } from '../repositories/IPlayerRepository';
 import { Player } from '../entities/Player';
+import { getShopItem } from '../gameCatalog';
 
 export interface BuyShopItemParams {
   playerId: string;
   itemId: string;
-  price: number;
-  emoji: string;
-  itemType: 'hat' | 'acc';
 }
 
 export class BuyShopItem {
   constructor(private playerRepo: IPlayerRepository) {}
 
   async execute(params: BuyShopItemParams): Promise<{ player: Player; inventory: Record<string, number> } | null> {
+    const item = getShopItem(params.itemId);
+    if (!item) throw new Error('UNKNOWN_SHOP_ITEM');
+
     const player = await this.playerRepo.findById(params.playerId);
     if (!player) return null;
 
     const inventory = await this.playerRepo.getInventory(params.playerId);
 
-    // If item is already owned, we equip it directly without spending coins
-    if (inventory[params.itemId]) {
-      if (params.itemType === 'hat') {
-        player.hat = params.emoji;
-      } else {
-        player.acc = params.emoji;
-      }
-      
+    // Equipping an owned item is free, but its slot and emoji are still
+    // resolved by the server catalog rather than browser supplied data.
+    if (inventory[item.id]) {
+      if (item.slot === 'hat') player.hat = item.emoji;
+      else player.acc = item.emoji;
       player.updatedAt = new Date();
-      const savedPlayer = await this.playerRepo.save(player);
-      return { player: savedPlayer, inventory };
+      return { player: await this.playerRepo.save(player), inventory };
     }
 
-    if (player.coins < params.price) {
-      throw new Error('INSUFFICIENT_COINS');
-    }
+    if (player.coins < item.price) throw new Error('INSUFFICIENT_COINS');
 
-    player.coins -= params.price;
-    if (params.itemType === 'hat') {
-      player.hat = params.emoji;
-    } else {
-      player.acc = params.emoji;
-    }
+    player.coins -= item.price;
+    if (item.slot === 'hat') player.hat = item.emoji;
+    else player.acc = item.emoji;
 
-    inventory[params.itemId] = 1;
+    inventory[item.id] = 1;
     player.updatedAt = new Date();
 
     const savedPlayer = await this.playerRepo.save(player);
     await this.playerRepo.updateInventory(params.playerId, inventory);
-
-    return {
-      player: savedPlayer,
-      inventory,
-    };
+    return { player: savedPlayer, inventory };
   }
 }

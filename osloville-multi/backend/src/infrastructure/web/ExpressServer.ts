@@ -1,6 +1,11 @@
-import express, { Express } from 'express';
+import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { HttpController } from '../../adapters/controllers/HttpController';
+
+const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
 
 export class ExpressServer {
   private app: Express;
@@ -12,12 +17,20 @@ export class ExpressServer {
   }
 
   private setupMiddleware() {
+    this.app.disable('x-powered-by');
     this.app.use(cors({
-      origin: '*', // Allow all client connections (Next.js is typically at port 3000)
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization']
+      origin: allowedOrigins,
+      methods: ['GET', 'POST', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Key'],
+      maxAge: 86_400,
     }));
-    this.app.use(express.json());
+    this.app.use(express.json({ limit: '32kb' }));
+    this.app.use((_req: Request, res: Response, next: NextFunction) => {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('X-Frame-Options', 'DENY');
+      res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+      next();
+    });
   }
 
   private setupRoutes(httpController: HttpController) {
@@ -28,3 +41,5 @@ export class ExpressServer {
     return this.app;
   }
 }
+
+export { allowedOrigins };

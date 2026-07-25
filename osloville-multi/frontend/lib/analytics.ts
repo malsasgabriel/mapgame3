@@ -1,30 +1,57 @@
-// Local analytics, no tracking, self-learning
+// Privacy-preserving local analytics. Sampling and batched persistence keep
+// tracking out of the render/input hot path.
 type EventType = 'move' | 'collect' | 'chat' | 'shop_buy' | 'quest_complete' | 'photo_share' | 'landmark_discover';
-export type AnalyticsEvent = { type: EventType; value?: any; ts: number; x?: number; y?: number };
+type EventValue = string | number | boolean | null | Record<string, unknown>;
+export type AnalyticsEvent = { type: EventType; value?: EventValue; ts: number; x?: number; y?: number };
 
+const MAX_EVENTS = 500;
+const MOVE_SAMPLE_MS = 500;
 let events: AnalyticsEvent[] = [];
-if (typeof localStorage !== 'undefined') {
-  try { events = JSON.parse(localStorage.getItem('oslo_analytics') || '[]'); } catch {}
-}
-function save() { try { localStorage.setItem('oslo_analytics', JSON.stringify(events.slice(-500))); } catch {} }
+let lastMoveAt = 0;
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
-export function track(type: EventType, value?: any, pos?: {x:number,y:number}) {
-  const e: AnalyticsEvent = { type, value, ts: Date.now(), x: pos?.x, y: pos?.y };
-  events.push(e); save();
-  // console for dev
-  // console.log('[Analytics]', e);
+if (typeof localStorage !== 'undefined') {
+  try {
+    const stored = JSON.parse(localStorage.getItem('oslo_analytics') || '[]');
+    if (Array.isArray(stored)) events = stored.slice(-MAX_EVENTS);
+  } catch {
+    events = [];
+  }
 }
+
+function persistSoon() {
+  if (saveTimer || typeof localStorage === 'undefined') return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    try { localStorage.setItem('oslo_analytics', JSON.stringify(events.slice(-MAX_EVENTS))); } catch {}
+  }, 1_000);
+}
+
+export function track(type: EventType, value?: EventValue, pos?: { x: number; y: number }) {
+  const now = Date.now();
+  if (type === 'move') {
+    if (now - lastMoveAt < MOVE_SAMPLE_MS) return;
+    lastMoveAt = now;
+  }
+  events.push({ type, value, ts: now, x: pos?.x, y: pos?.y });
+  if (events.length > MAX_EVENTS) events = events.slice(-MAX_EVENTS);
+  persistSoon();
+}
+
 export function getHeatmap() {
-  // returns grid of move counts
   const grid: Record<string, number> = {};
-  events.filter(e=>e.type==='move' && e.x).forEach(e=>{ const key=`${Math.floor(e.x!/10)*10},${Math.floor(e.y!/10)*10}`; grid[key]=(grid[key]||0)+1; });
+  events.filter(event => event.type === 'move' && typeof event.x === 'number' && typeof event.y === 'number').forEach(event => {
+    const key = `${Math.floor(event.x! / 10) * 10},${Math.floor(event.y! / 10) * 10}`;
+    grid[key] = (grid[key] || 0) + 1;
+  });
   return grid;
 }
+
 export function getFunnel() {
   return {
-    moves: events.filter(e=>e.type==='move').length,
-    collects: events.filter(e=>e.type==='collect').length,
-    chats: events.filter(e=>e.type==='chat').length,
-    shops: events.filter(e=>e.type==='shop_buy').length,
+    moves: events.filter(event => event.type === 'move').length,
+    collects: events.filter(event => event.type === 'collect').length,
+    chats: events.filter(event => event.type === 'chat').length,
+    shops: events.filter(event => event.type === 'shop_buy').length,
   };
 }

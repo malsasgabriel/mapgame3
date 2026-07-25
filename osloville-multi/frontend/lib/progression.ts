@@ -1,3 +1,6 @@
+export const START_LEVEL = 5;
+export const XP_PER_LEVEL = 1000;
+
 export const BADGES = [
   { id: 'explorer', name: 'Explorer', icon: '🗺️', desc: 'Discover 5 landmarks', check: (d: Set<string>) => d.size >= 5 },
   { id: 'barista', name: 'Barista Friend', icon: '☕', desc: 'Visit Grüner 3 times', check: (visits: Record<string,number>) => (visits.gruner||0) >=3 },
@@ -12,12 +15,17 @@ export const SEASON_1 = {
   tiers: Array.from({length:30}, (_,i)=>({
     level: i+1,
     reward: i%5===4 ? { type:'legendary', emoji:'👑', name:'Viking Crown' } : i%3===0 ? { type:'coins', amount: 100+ i*10 } : { type:'item', emoji:['🧶','🧣','☕','🎧','🧤'][i%5] },
-    xpRequired: 300 + i*80
-  }))
+    xpRequired: 300 + i*80,
+  })),
 };
 
+/** Matches the backend formula exactly: new players begin at level 5 and earn
+ * one level per 1,000 total XP. */
 export function xpToLevel(xp: number) {
-  let level = 1, remaining = xp, req = 300;
-  while (remaining >= req && level < 100) { remaining -= req; level++; req = 300 + (level-1)*80; }
-  return { level, progress: remaining, nextReq: req };
+  const safeXp = Math.max(0, Math.floor(xp));
+  return {
+    level: START_LEVEL + Math.floor(safeXp / XP_PER_LEVEL),
+    progress: safeXp % XP_PER_LEVEL,
+    nextReq: XP_PER_LEVEL,
+  };
 }

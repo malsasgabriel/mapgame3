@@ -59,9 +59,34 @@ const SCHEMA_SQL = `
     created_at TIMESTAMPTZ DEFAULT NOW()
   );
 
+  -- Shared daily world pickup ownership. The primary key makes collection
+  -- atomic even when two sockets reach the same item simultaneously.
+  CREATE TABLE IF NOT EXISTS world_pickup_claims (
+    world_day DATE NOT NULL,
+    item_id VARCHAR(32) NOT NULL,
+    collector_id VARCHAR(100) REFERENCES players(id) ON DELETE SET NULL,
+    claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (world_day, item_id)
+  );
+
+  -- Playtest feedback: a durable queue for human test sessions and QA agents.
+  CREATE TABLE IF NOT EXISTS playtest_reports (
+    id VARCHAR(100) PRIMARY KEY,
+    player_id VARCHAR(100) REFERENCES players(id) ON DELETE SET NULL,
+    player_name VARCHAR(255) NOT NULL,
+    category VARCHAR(48) NOT NULL,
+    severity VARCHAR(16) NOT NULL CHECK (severity IN ('blocker', 'major', 'minor', 'idea')),
+    title VARCHAR(140) NOT NULL,
+    reproduction VARCHAR(1200) NOT NULL DEFAULT '',
+    diagnostics JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status VARCHAR(16) NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'triaged', 'fixed', 'wont_fix')),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
   -- Indexing for speed
   CREATE INDEX IF NOT EXISTS idx_players_updated_at ON players(updated_at);
   CREATE INDEX IF NOT EXISTS idx_chat_created_at ON chat_messages(created_at);
+  CREATE INDEX IF NOT EXISTS idx_playtest_reports_created_at ON playtest_reports(created_at DESC);
 `;
 
 export async function initDatabase(): Promise<void> {

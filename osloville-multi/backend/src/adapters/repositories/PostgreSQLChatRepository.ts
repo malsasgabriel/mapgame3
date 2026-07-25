@@ -37,9 +37,15 @@ export class PostgreSQLChatRepository implements IChatRepository {
   }
 
   async getRecent(limit: number): Promise<ChatMessage[]> {
+    // Select the latest N first, then restore chronological order for the UI.
+    // `ORDER BY created_at ASC LIMIT N` incorrectly returned the oldest chat
+    // messages in a long-running world.
+    const safeLimit = Math.max(1, Math.min(limit, 100));
     const res = await db.query(
-      'SELECT * FROM chat_messages ORDER BY created_at ASC LIMIT $1',
-      [limit]
+      `SELECT * FROM (
+        SELECT * FROM chat_messages ORDER BY created_at DESC LIMIT $1
+      ) recent ORDER BY created_at ASC`,
+      [safeLimit],
     );
     return res.rows.map(row => this.mapRowToChatMessage(row));
   }
