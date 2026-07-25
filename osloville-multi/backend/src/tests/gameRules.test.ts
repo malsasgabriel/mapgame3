@@ -14,9 +14,9 @@ test('movement clamps teleport attempts and derives distance server-side', async
 });
 
 test('landmarks are discovered only by actual server-side proximity', async () => {
-  const repo = new MemoryPlayerRepository([makePlayer({ x: 620, y: 520, discovered: [] })]);
+  const repo = new MemoryPlayerRepository([makePlayer({ x: 1291, y: 1193, discovered: [] })]);
   const result = await new MovePlayer(repo).execute({
-    id: 'test-player', x: 620, y: 520,
+    id: 'test-player', x: 1291, y: 1193,
     // A malicious browser may claim any landmark; this payload is ignored.
     discovered: ['holmenkollen', 'gruner'],
   });
@@ -25,6 +25,8 @@ test('landmarks are discovered only by actual server-side proximity', async () =
   assert.deepEqual(result.player.discovered, ['palace']);
   assert.equal(result.player.coins, 1270);
   assert.equal(result.player.xp, 670);
+  assert.ok(Math.abs(result.player.lat - 59.917) < 0.001);
+  assert.ok(Math.abs(result.player.lng - 10.7276) < 0.001);
 });
 
 test('shop catalog is authoritative and an owned item equips without a second charge', async () => {

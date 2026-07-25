@@ -70,8 +70,8 @@ export class NpcSimulateTick {
           npc.y = Math.max(100, Math.min(1700, npc.y + Math.sin(angle) * dist));
           
           // Recompute Lat/Lng
-          npc.lng = 10.68 + (npc.x / 2400) * 0.12;
-          npc.lat = 59.965 - (npc.y / 1800) * 0.08;
+          npc.lng = 10.62 + (npc.x / 2400) * 0.20;
+          npc.lat = 59.97 - (npc.y / 1800) * 0.08;
           npc.walkKm += dist * 0.001;
         }
 

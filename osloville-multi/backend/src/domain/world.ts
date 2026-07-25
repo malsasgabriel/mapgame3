@@ -15,14 +15,14 @@ export type WorldLandmark = {
 };
 
 export const WORLD_LANDMARKS: readonly WorldLandmark[] = [
-  { id: 'opera', x: 1380, y: 1220 },
-  { id: 'palace', x: 620, y: 520 },
-  { id: 'vigeland', x: 380, y: 680 },
-  { id: 'akershus', x: 1020, y: 1020 },
-  { id: 'akerbrygge', x: 800, y: 1100 },
-  { id: 'karljohan', x: 900, y: 780 },
-  { id: 'holmenkollen', x: 420, y: 220 },
-  { id: 'gruner', x: 1280, y: 580 },
+  { id: 'opera', x: 1594, y: 1406 },
+  { id: 'palace', x: 1291, y: 1193 },
+  { id: 'vigeland', x: 960, y: 968 },
+  { id: 'akershus', x: 1404, y: 1418 },
+  { id: 'akerbrygge', x: 1224, y: 1395 },
+  { id: 'karljohan', x: 1428, y: 1283 },
+  { id: 'holmenkollen', x: 576, y: 158 },
+  { id: 'gruner', x: 1644, y: 1058 },
 ] as const;
 
 const COLLECTIBLE_TYPES: Array<Pick<WorldCollectible, 'icon' | 'type'>> = [

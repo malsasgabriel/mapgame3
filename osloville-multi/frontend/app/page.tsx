@@ -1,4 +1,5 @@
 'use client';
+import dynamic from 'next/dynamic';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { socket, getBackendUrl } from '@/lib/socket';
 import { PerformanceMonitor } from '@/lib/performance';
@@ -12,19 +13,20 @@ import { t, Lang, detectLang, localeFor, weatherLabel } from '@/lib/i18n';
 import { track, getFunnel } from '@/lib/analytics';
 import { screenShake, popScale, slowMo } from '@/lib/juice';
 import { getNpcResponse, getNearbyNpc, NPCS } from '@/lib/aiNpcs';
-import { ParallaxWorld } from './components/ParallaxWorld';
 import { MobileJoystick } from './components/MobileJoystick';
+
+const RealOsloMap = dynamic(() => import('./components/RealOsloMap').then(module => module.RealOsloMap), { ssr: false });
 
 const MAP_SIZE = { w: 2400, h: 1800 };
 const LANDMARKS = [
-  { id: 'opera', name: 'Opera House', emoji: '🎭', x: 1380, y: 1220, lat: 59.9075, lng: 10.7528, desc: 'Walk on the roof!' },
-  { id: 'palace', name: 'Royal Palace', emoji: '🏰', x: 620, y: 520, lat: 59.9170, lng: 10.7276, desc: 'Guard change noon' },
-  { id: 'vigeland', name: 'Vigeland Park', emoji: '🌳', x: 380, y: 680, lat: 59.927, lng: 10.7, desc: '212 sculptures' },
-  { id: 'akershus', name: 'Akershus Fortress', emoji: '⚔️', x: 1020, y: 1020, lat: 59.907, lng: 10.737, desc: 'Castle & history' },
-  { id: 'akerbrygge', name: 'Aker Brygge', emoji: '⛵', x: 800, y: 1100, lat: 59.908, lng: 10.722, desc: 'Fjord promenade' },
-  { id: 'karljohan', name: 'Karl Johan Gate', emoji: '🛍️', x: 900, y: 780, lat: 59.913, lng: 10.739, desc: 'Main street buzz' },
-  { id: 'holmenkollen', name: 'Holmenkollen', emoji: '⛷️', x: 420, y: 220, lat: 59.963, lng: 10.668, desc: 'Epic ski jump!' },
-  { id: 'gruner', name: 'Grünerløkka', emoji: '☕', x: 1280, y: 580, lat: 59.923, lng: 10.757, desc: 'Hip coffee district' },
+  { id: 'opera', name: 'Opera House', emoji: '🎭', x: 1594, y: 1406, lat: 59.9075, lng: 10.7528, desc: 'Walk on the roof!' },
+  { id: 'palace', name: 'Royal Palace', emoji: '🏰', x: 1291, y: 1193, lat: 59.9170, lng: 10.7276, desc: 'Guard change noon' },
+  { id: 'vigeland', name: 'Vigeland Park', emoji: '🌳', x: 960, y: 968, lat: 59.927, lng: 10.7, desc: '212 sculptures' },
+  { id: 'akershus', name: 'Akershus Fortress', emoji: '⚔️', x: 1404, y: 1418, lat: 59.907, lng: 10.737, desc: 'Castle & history' },
+  { id: 'akerbrygge', name: 'Aker Brygge', emoji: '⛵', x: 1224, y: 1395, lat: 59.908, lng: 10.722, desc: 'Fjord promenade' },
+  { id: 'karljohan', name: 'Karl Johan Gate', emoji: '🛍️', x: 1428, y: 1283, lat: 59.913, lng: 10.739, desc: 'Main street buzz' },
+  { id: 'holmenkollen', name: 'Holmenkollen', emoji: '⛷️', x: 576, y: 158, lat: 59.963, lng: 10.668, desc: 'Epic ski jump!' },
+  { id: 'gruner', name: 'Grünerløkka', emoji: '☕', x: 1644, y: 1058, lat: 59.923, lng: 10.757, desc: 'Hip coffee district' },
 ];
 const MOCK_NAMES = [
   { name: 'Ingrid Ø.', statusKey: 'bot.ingrid', color: '#FF8FA3' },
@@ -963,31 +965,18 @@ export default function Page() {
           <div style={{ position:'absolute', left:'50%', top:14, transform:'translateX(-50%)', zIndex:4, background:'rgba(38,70,83,0.86)', color:'white', padding:'6px 14px', borderRadius:999, fontSize:11, fontWeight:600 }}>{t('hud.mapHint', lang)} · {fps} FPS · {districtLabel}</div>
           <canvas ref={snowCanvasRef} style={{ position:'absolute', inset:0, zIndex:4, pointerEvents:'none', opacity:snowEnabled?1:0 }} />
           {nightMode && <div style={{ position:'absolute', inset:0, zIndex:3, background:'radial-gradient(70% 60% at 50% 20%, rgba(80,120,255,0.18), rgba(10,15,35,0.55))', pointerEvents:'none' }}><div style={{ position:'absolute', inset:0, backgroundImage:"url('/assets/aurora.jpg')", backgroundSize:'cover', mixBlendMode:'overlay', opacity:0.25 }}></div></div>}
-          <ParallaxWorld offset={mapOffset} scale={mapScale} />
-          <div style={{ position:'absolute', left:0, top:0, width:MAP_SIZE.w, height:MAP_SIZE.h, backgroundImage: useRealMap ? "url('/assets/districts.jpg')" : "url('/assets/map.jpg')", backgroundSize:'cover', borderRadius:24, boxShadow:'0 20px 80px rgba(0,0,0,0.18)', transformOrigin:'0 0', transform:`translate(${mapOffset.x}px,${mapOffset.y}px) scale(${mapScale})`, willChange:'transform' }}>
-            {/* Path preview */}
-            {pathPreview.length>1 && <svg width={MAP_SIZE.w} height={MAP_SIZE.h} style={{ position:'absolute', left:0, top:0, pointerEvents:'none' }}><path d={`M ${pathPreview.map(p=>`${p.x} ${p.y}`).join(' L ')}`} stroke="rgba(38,70,83,0.25)" strokeWidth="4" strokeDasharray="10 8" fill="none" strokeLinecap="round" /></svg>}
-            {collectibles.filter(c=>!c.collected).map(c=>(
-              <div key={c.id} className="collectible" onClick={e => { e.stopPropagation(); moveTo(c.x, c.y, true); }} style={{ position:'absolute', left:c.x, top:c.y, width:42, height:42, borderRadius:'50%', background:'radial-gradient(120% 120% at 30% 20%, #fff7c2, #e9c46a)', border:'2px solid white', boxShadow:'0 6px 16px rgba(233,196,106,0.5)', display:'grid', placeItems:'center', fontSize:20, transform:'translate(-50%,-50%)', cursor:'pointer', animation:'coinFloat 3s ease-in-out infinite' }}>{c.icon}</div>
-            ))}
-            {LANDMARKS.map(l=>(
-              <div key={l.id} className="landmark-dot" onClick={e=>{ e.stopPropagation(); const rect=viewportRef.current?.getBoundingClientRect(); if(rect){ setMapOffset({ x:rect.width/2-l.x*mapScale, y:rect.height/2-l.y*mapScale }); } moveTo(l.x,l.y,true); }} style={{ position:'absolute', left:l.x, top:l.y, width:58, height:58, borderRadius:18, background:'white', border:'2px solid white', boxShadow:'0 8px 24px rgba(0,0,0,0.16)', display:'grid', placeItems:'center', fontSize:26, transform:'translate(-50%,-50%)', cursor:'pointer' }}>{l.emoji}</div>
-            ))}
-            {NPCS.map(npc=>(
-              <div key={npc.id} style={{ position:'absolute', left:npc.x, top:npc.y-70, transform:'translate(-50%,-100%)', background:'rgba(38,70,83,0.9)', color:'white', padding:'4px 8px', borderRadius:999, fontSize:10, fontWeight:600, pointerEvents:'none' }}>{npc.name} {npc.emoji}</div>
-            ))}
-            {visiblePlayers.map(p => (
-              <div key={p.id} className="player-pin" data-id={p.id} onClick={e=>{ e.stopPropagation(); setShowPlayerModal(p); }} style={{ position:'absolute', left:p.x, top:p.y, transform:'translate(-50%,-100%)', display:'flex', flexDirection:'column', alignItems:'center', cursor:'pointer', zIndex:p.id===currentUser?.id?10:2 }}>
-                <div style={{ background:p.id===currentUser?.id?'#264653':'white', color:p.id===currentUser?.id?'white':'#1a2a33', padding:'6px 12px', borderRadius:'18px 18px 18px 4px', fontSize:12, fontWeight:600, boxShadow:'0 6px 18px rgba(0,0,0,0.14)', maxWidth:180, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', marginBottom:8, animation:'bubbleIn .3s ease' }}>{p.status||''}</div>
-                <div className="avatar-wrap" style={{ position:'relative', width:56, height:56 }}>
-                  <img src={avatarOf(p)} style={{ width:p.id===currentUser?.id?62:56, height:p.id===currentUser?.id?62:56, borderRadius:'50%', border:`3px solid ${p.id===currentUser?.id?customColor:(p.color||'white')}`, boxShadow:'0 6px 18px rgba(0,0,0,0.18)', objectFit:'cover', animation: p.moving ? 'walkBob 0.4s ease-in-out infinite' : 'breathe 2s ease-in-out infinite' }} alt="" />
-                  <div style={{ position:'absolute', left:'50%', top:-10, transform:'translateX(-50%)', fontSize:26, filter:'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }}>{p.id===currentUser?.id?customHat:p.hat}</div>
-                  <div style={{ position:'absolute', right:-6, bottom:2, fontSize:16, background:'white', borderRadius:'50%', width:22, height:22, display:'grid', placeItems:'center', boxShadow:'0 2px 6px rgba(0,0,0,0.15)' }}>{p.id===currentUser?.id?customAcc:p.acc}</div>
-                </div>
-                <div style={{ marginTop:6, background:p.id===currentUser?.id?'#264653':'rgba(255,255,255,0.92)', color:p.id===currentUser?.id?'white':'#1a2a33', padding:'2px 8px', borderRadius:999, fontSize:10, fontWeight:700 }}>{p.name.split(' ')[0]}</div>
-              </div>
-            ))}
-          </div>
+          <RealOsloMap
+            players={visiblePlayers}
+            currentPlayerId={currentUser?.id}
+            landmarks={LANDMARKS.map(landmark => ({ ...landmark, name: t(`landmark.${landmark.id}.name`, lang) }))}
+            collectibles={collectibles}
+            path={pathPreview}
+            nightMode={nightMode}
+            tileFailureLabel={t('map.tilesUnavailable', lang)}
+            onNavigate={(x, y) => moveTo(x, y, true)}
+            onSelectPlayer={playerId => { const player = visiblePlayers.find(entry => entry.id === playerId); if (player) setShowPlayerModal(player); }}
+            onLandmarkClick={landmarkId => { const landmark = LANDMARKS.find(entry => entry.id === landmarkId); if (landmark) moveTo(landmark.x, landmark.y, true); }}
+          />
           <div style={{ position:'absolute', right:14, top:14, zIndex:4, background:'rgba(255,255,255,0.92)', padding:'6px 12px', borderRadius:999, fontSize:11, fontWeight:600 }}>{weather ? `${weather.isSnow?'❄️': weather.isRain?'🌧️':'☀️'} ${t('hud.oslo', lang)} · ${weather.temp}°C · ${currentWeatherLabel}` : t('hud.oslo', lang)} · {levelUpShow ? `${t('hud.levelUp', lang)} ${levelUpShow.from}→${levelUpShow.to}` : `${districtLabel} · ${nightMode ? t('hud.nightOn', lang) : t('hud.nightOff', lang)}`}</div>
           <MobileJoystick onMove={(dx,dy)=>{ if(!currentUser|| (dx===0&&dy===0)) return; const nx=currentUser.x+dx*8; const ny=currentUser.y+dy*8; setCurrentUser({...currentUser,x:nx,y:ny}); setWalkKm(k=>k+Math.hypot(dx,dy)*0.002); }} />
           {levelUpShow && <div style={{ position:'absolute', left:'50%', top:'40%', transform:'translate(-50%,-50%)', background:'linear-gradient(135deg,#264653,#2A9D8F)', color:'white', padding:'16px 24px', borderRadius:20, fontWeight:800, fontSize:22, zIndex:10, boxShadow:'0 20px 60px rgba(0,0,0,0.3)', animation:'levelUp 0.6s cubic-bezier(.16,1,.3,1)' }}>🎉 {t('hud.levelUp', lang)} {levelUpShow.from} → {levelUpShow.to} 🎉<br /><small style={{ fontSize:12, fontWeight:500 }}>{t('hud.reward', lang)}: {SEASON_1.tiers[levelUpShow.to-1]?.reward.emoji} {SEASON_1.tiers[levelUpShow.to-1]?.reward.name||'+100 🪙'}</small></div>}
