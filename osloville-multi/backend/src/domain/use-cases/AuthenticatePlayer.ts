@@ -8,7 +8,13 @@ export interface AuthenticatePlayerParams {
   email: string | null;
   avatarUrl: string;
   googleToken?: string;
-  googleClientId?: string;
+}
+
+const DEMO_CLIENT_ID = '1087815734233-xyz.apps.googleusercontent.com';
+
+function cleanText(value: string, fallback: string, max: number): string {
+  const cleaned = value.trim().replace(/\s+/g, ' ').slice(0, max);
+  return cleaned || fallback;
 }
 
 export class AuthenticatePlayer {
@@ -18,38 +24,34 @@ export class AuthenticatePlayer {
 
   async execute(params: AuthenticatePlayerParams): Promise<{ player: Player; isNew: boolean }> {
     let email = params.email;
-    let name = params.name;
-    let avatarUrl = params.avatarUrl;
-    let id = params.id;
+    let name = cleanText(params.name, 'Explorer', 48);
+    let avatarUrl = typeof params.avatarUrl === 'string' ? params.avatarUrl.slice(0, 2048) : '';
+    let id = cleanText(params.id, '', 100);
 
     if (params.googleToken) {
-      try {
-        if (params.googleClientId && !params.googleClientId.startsWith('1087815734233-xyz')) {
-          const ticket = await this.oauthClient.verifyIdToken({
-            idToken: params.googleToken,
-            audience: params.googleClientId,
-          });
-          const payload = ticket.getPayload();
-          if (payload) {
-            id = payload.sub;
-            email = payload.email || null;
-            name = payload.name || payload.given_name || 'Google User';
-            avatarUrl = payload.picture || '';
-          }
-        } else {
-          // Parse token payload for demo credentials without verify check
-          const decoded = this.insecureDecodeJwt(params.googleToken);
-          if (decoded) {
-            id = decoded.sub || id;
-            email = decoded.email || email;
-            name = decoded.name || decoded.given_name || name;
-            avatarUrl = decoded.picture || avatarUrl;
-          }
-        }
-      } catch (err) {
-        console.warn('[AuthenticatePlayer] JWT verification failed, using provided client parameters:', err);
+      const configuredClientId = process.env.GOOGLE_CLIENT_ID;
+      // The placeholder client id is deliberately only for the offline demo.
+      // Never decode a browser JWT as identity in a deployed environment.
+      if (!configuredClientId || configuredClientId === DEMO_CLIENT_ID) {
+        throw new Error('GOOGLE_AUTH_NOT_CONFIGURED');
       }
+
+      const ticket = await this.oauthClient.verifyIdToken({
+        idToken: params.googleToken,
+        audience: configuredClientId,
+      });
+      const payload = ticket.getPayload();
+      if (!payload?.sub) throw new Error('INVALID_GOOGLE_TOKEN');
+
+      id = payload.sub;
+      email = payload.email || null;
+      name = cleanText(payload.name || payload.given_name || 'Google User', 'Google User', 48);
+      avatarUrl = (payload.picture || '').slice(0, 2048);
     }
+
+    // Anonymous demo identities remain available for local/offline play, but
+    // still receive normalized, bounded fields before persistence.
+    if (!id || !/^[a-zA-Z0-9_.:-]+$/.test(id)) throw new Error('INVALID_PLAYER_ID');
 
     let player = await this.playerRepo.findById(id);
     let isNew = false;
@@ -77,26 +79,14 @@ export class AuthenticatePlayer {
         updatedAt: new Date(),
       };
       player = await this.playerRepo.save(player);
-      // Create starting inventory
       await this.playerRepo.updateInventory(id, { hat_beanie: 1, acc_coffee: 1 });
     } else {
       player.name = name;
-      player.avatarUrl = avatarUrl;
+      if (avatarUrl) player.avatarUrl = avatarUrl;
       player.updatedAt = new Date();
       player = await this.playerRepo.save(player);
     }
 
     return { player, isNew };
-  }
-
-  private insecureDecodeJwt(token: string): any {
-    try {
-      const parts = token.split('.');
-      if (parts.length !== 3) return null;
-      const payload = Buffer.from(parts[1], 'base64').toString('utf-8');
-      return JSON.parse(payload);
-    } catch {
-      return null;
-    }
   }
 }

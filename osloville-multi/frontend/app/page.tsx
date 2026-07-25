@@ -44,12 +44,74 @@ const SHOP_ITEMS = [
   { id: 'acc_mitten', name: 'Mittens', emoji: '🧤', price: 85, type: 'acc', rarity: 'common' },
 ];
 
-type Player = any;
+type CollectibleType = 'coin' | 'heart' | 'gem' | 'coffee' | 'mitten';
+type CosmeticType = 'hat' | 'acc';
+type PhotoFilter = 'vivid' | 'cozy' | 'aurora' | 'vintage';
+
+type Player = {
+  id: string;
+  name: string;
+  email?: string | null;
+  avatarUrl?: string;
+  avatar_url?: string;
+  avatar?: string;
+  x: number;
+  y: number;
+  lat?: number;
+  lng?: number;
+  status: string;
+  hat?: string;
+  acc?: string;
+  color?: string;
+  coins?: number;
+  xp?: number;
+  level: number;
+  walkKm?: number;
+  discovered?: string[];
+  moving?: boolean;
+  targetX?: number | null;
+  targetY?: number | null;
+};
+
+type ChatMessage = {
+  id: string;
+  name: string;
+  text: string;
+  avatarUrl?: string;
+  avatar_url?: string;
+  playerId?: string;
+  player_id?: string;
+};
+
+type Collectible = {
+  id: string;
+  x: number;
+  y: number;
+  icon: string;
+  type: CollectibleType;
+  collected: boolean;
+};
+
+type Quest = {
+  id: string;
+  icon: string;
+  title: string;
+  progress: number;
+  total: number;
+  done: boolean;
+  reward: number;
+};
+
+type ShopItem = (typeof SHOP_ITEMS)[number];
+type LoginUser = Partial<Player> & { googleToken?: string };
+
+const avatarOf = (player: Pick<Player, 'avatarUrl' | 'avatar_url' | 'avatar'>) =>
+  player.avatarUrl || player.avatar_url || player.avatar || '/assets/characters.png';
 
 export default function Page() {
   const [currentUser, setCurrentUser] = useState<Player | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
-  const [chat, setChat] = useState<any[]>([]);
+  const [chat, setChat] = useState<ChatMessage[]>([]);
   const [statusInput, setStatusInput] = useState('Hei Oslo! 👋');
   const [chatInput, setChatInput] = useState('');
   const [coinCount, setCoinCount] = useState(1240);
@@ -67,9 +129,13 @@ export default function Page() {
   const [showChooser, setShowChooser] = useState(false);
   const [showPlayerModal, setShowPlayerModal] = useState<Player | null>(null);
   const [showCustomizer, setShowCustomizer] = useState(false);
-  const [showTutorial, setShowTutorial] = useState(false);
-  const [tutStep, setTutStep] = useState(0);
   const [showPhoto, setShowPhoto] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackCategory, setFeedbackCategory] = useState('gameplay');
+  const [feedbackSeverity, setFeedbackSeverity] = useState<'blocker' | 'major' | 'minor' | 'idea'>('minor');
+  const [feedbackTitle, setFeedbackTitle] = useState('');
+  const [feedbackReproduction, setFeedbackReproduction] = useState('');
+  const [notice, setNotice] = useState('');
   const [loadingProgress, setLoadingProgress] = useState(8);
   const [fps, setFps] = useState(60);
   const [weather, setWeather] = useState<OsloWeather | null>(null);
@@ -77,24 +143,31 @@ export default function Page() {
   const [customHat, setCustomHat] = useState('🧶');
   const [customAcc, setCustomAcc] = useState('☕');
   const [customColor, setCustomColor] = useState('#2A9D8F');
-  const [collectibles, setCollectibles] = useState<any[]>([]);
+  const [collectibles, setCollectibles] = useState<Collectible[]>([]);
   const [discovered, setDiscovered] = useState<Set<string>>(new Set(['palace', 'karljohan']));
   const [inventory, setInventory] = useState<Record<string, number>>({ hat_beanie: 1, acc_coffee: 1 });
-  const [quests, setQuests] = useState([
+  const [quests, setQuests] = useState<Quest[]>([
     { id: 'q1', icon: '👋', title: 'Say hei to 3 locals', progress: 0, total: 3, done: false, reward: 120 },
     { id: 'q2', icon: '☕', title: 'Fika at Grünerløkka', progress: 0, total: 1, done: false, reward: 80 },
     { id: 'q3', icon: '🪙', title: 'Collect 5 boller', progress: 0, total: 5, done: false, reward: 150 },
     { id: 'q4', icon: '🌌', title: 'See aurora night', progress: 0, total: 1, done: false, reward: 200 },
   ]);
+  const questsRef = useRef<Quest[]>([]);
   const [socketStatus, setSocketStatus] = useState<'offline' | 'connecting' | 'connected'>('offline');
-  const [googleClientId, setGoogleClientId] = useState('1087815734233-xyz.apps.googleusercontent.com');
+  const [googleClientId, setGoogleClientId] = useState('');
 
-  const parseJwt = (token: string) => {
+  const parseJwt = (token: string): Record<string, string> | null => {
     try {
-      const parts = token.split('.');
-      if (parts.length !== 3) return null;
-      const payload = Buffer.from(parts[1], 'base64').toString('utf-8');
-      return JSON.parse(payload);
+      const encoded = token.split('.')[1];
+      if (!encoded) return null;
+      const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+      const json = decodeURIComponent(
+        atob(base64)
+          .split('')
+          .map(char => `%${`00${char.charCodeAt(0).toString(16)}`.slice(-2)}`)
+          .join(''),
+      );
+      return JSON.parse(json) as Record<string, string>;
     } catch {
       return null;
     }
@@ -103,22 +176,37 @@ export default function Page() {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0, offX: 0, offY: 0 });
   const [hasDragged, setHasDragged] = useState(false);
   const [pathPreview, setPathPreview] = useState<{x:number,y:number}[]>([]);
-  const [nearbyNpc, setNearbyNpc] = useState<any>(null);
+  const [nearbyNpc, setNearbyNpc] = useState<(typeof NPCS)[number] | null>(null);
   const [levelUpShow, setLevelUpShow] = useState<{from:number,to:number}|null>(null);
-  const [photoFilter, setPhotoFilter] = useState('vivid');
+  const [photoFilter, setPhotoFilter] = useState<PhotoFilter>('vivid');
   const [badges, setBadges] = useState<string[]>([]);
-  const [joystickActive, setJoystickActive] = useState(false);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const snowCanvasRef = useRef<HTMLCanvasElement>(null);
+  const [viewportSize, setViewportSize] = useState({ w: 0, h: 0 });
   const lastSyncRef = useRef(0);
   const pathQueueRef = useRef<{x:number,y:number}[]>([]);
 
   // Lang detect
   useEffect(() => { setLang(detectLang()); }, []);
+  useEffect(() => { questsRef.current = quests; }, [quests]);
 
   // Performance monitor
-  useEffect(() => { new PerformanceMonitor(setFps); }, []);
+  useEffect(() => {
+    const monitor = new PerformanceMonitor(setFps);
+    return () => monitor.stop();
+  }, []);
+
+  // Keep culling bounds in sync without listening to every mouse move.
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const update = () => setViewportSize({ w: viewport.clientWidth, h: viewport.clientHeight });
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [showLogin]);
 
   // Loading
   useEffect(() => {
@@ -243,6 +331,15 @@ export default function Page() {
         ], { duration: 500, easing: 'ease-in-out' });
       }
     };
+    const onPlaytestReported = () => {
+      setNotice('Thanks — your report is now in the live QA queue.');
+      setShowFeedback(false);
+      setFeedbackTitle('');
+      setFeedbackReproduction('');
+    };
+    const onActionRejected = (data: { event?: string; code?: string }) => {
+      if (data.event === 'playtest_report') setNotice('Report could not be sent. Please try again.');
+    };
 
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
@@ -258,6 +355,8 @@ export default function Page() {
     socket.on('shop_success', onShopSuccess);
     socket.on('waved_at', onWavedAt);
     socket.on('player_waved', onPlayerWaved);
+    socket.on('playtest_reported', onPlaytestReported);
+    socket.on('action_rejected', onActionRejected);
 
     if (socket.connected) {
       setSocketStatus('connected');
@@ -280,13 +379,32 @@ export default function Page() {
       socket.off('shop_success', onShopSuccess);
       socket.off('waved_at', onWavedAt);
       socket.off('player_waved', onPlayerWaved);
+      socket.off('playtest_reported', onPlaytestReported);
+      socket.off('action_rejected', onActionRejected);
     };
   }, []);
 
-  // Collectibles
-  useEffect(()=>{
-    const icons=[{icon:'🪙',type:'coin'},{icon:'💖',type:'heart'},{icon:'💎',type:'gem'},{icon:'☕',type:'coffee'}];
-    setCollectibles(Array.from({length:22},(_,i)=>{ const t=icons[Math.floor(Math.random()*icons.length)]; return { id:'c'+i, x:100+Math.random()*2200, y:100+Math.random()*1600, ...t, collected:false }; }));
+  // The backend supplies one deterministic daily world. This keeps every
+  // connected player looking at the same pickups and lets the server validate
+  // a collection against position. A local world still exists for offline play.
+  useEffect(() => {
+    const offlineIcons: Array<Pick<Collectible, 'icon' | 'type'>> = [
+      { icon: '🪙', type: 'coin' }, { icon: '💖', type: 'heart' },
+      { icon: '💎', type: 'gem' }, { icon: '☕', type: 'coffee' },
+    ];
+    const offlineWorld = Array.from({ length: 22 }, (_, index): Collectible => {
+      const item = offlineIcons[Math.floor(Math.random() * offlineIcons.length)];
+      return { id: `c${index}`, x: 100 + Math.random() * 2200, y: 100 + Math.random() * 1600, ...item, collected: false };
+    });
+    setCollectibles(offlineWorld);
+
+    fetch(`${getBackendUrl()}/api/world`)
+      .then(response => response.ok ? response.json() : Promise.reject(new Error('World unavailable')))
+      .then((data: { collectibles?: Omit<Collectible, 'collected'>[] }) => {
+        if (!Array.isArray(data.collectibles)) return;
+        setCollectibles(data.collectibles.map(item => ({ ...item, collected: false })));
+      })
+      .catch(() => undefined);
   }, []);
 
   // Snow
@@ -312,8 +430,8 @@ export default function Page() {
           if (dist<8) { pathQueueRef.current.shift(); if (pathQueueRef.current.length===0) { setPathPreview([]); return {...prev, x:target.x, y:target.y, moving:false}; } }
           else { const speed=Math.min(10, dist*0.14+2); track('move',null,{x:prev.x,y:prev.y}); const npc=getNearbyNpc(prev.x,prev.y); if (npc) setNearbyNpc(npc); else setNearbyNpc(null); return {...prev, x:prev.x+dx/dist*speed, y:prev.y+dy/dist*speed, moving:true}; }
         }
-        if (prev.moving && prev.targetX!=null) {
-          const dx=prev.targetX-prev.x, dy=prev.targetY-prev.y, dist=Math.hypot(dx,dy);
+        if (prev.moving && prev.targetX != null && prev.targetY != null) {
+          const dx = prev.targetX - prev.x, dy = prev.targetY - prev.y, dist = Math.hypot(dx, dy);
           if (dist<4) { setWalkKm(k=>k+Math.hypot(prev.targetX!-prev.x, prev.targetY!-prev.y)/900); return {...prev, x:prev.targetX!, y:prev.targetY!, moving:false, targetX:null, targetY:null}; }
           return {...prev, x:prev.x+dx/dist*6, y:prev.y+dy/dist*6};
         }
@@ -369,18 +487,21 @@ export default function Page() {
 
       script.onload = () => {
         try {
-          if ((window as any).google?.accounts?.id) {
+          if (googleClientId && (window as any).google?.accounts?.id) {
             (window as any).google.accounts.id.initialize({
               client_id: googleClientId,
               callback: (response: any) => {
                 const payload = parseJwt(response.credential);
+                if (!payload?.sub) {
+                  setShowChooser(true);
+                  return;
+                }
                 loginAs({
                   id: payload.sub,
                   name: payload.name || payload.given_name,
                   email: payload.email,
                   avatar: payload.picture,
                   googleToken: response.credential,
-                  googleClientId: googleClientId,
                 });
               },
               auto_select: false,
@@ -400,22 +521,21 @@ export default function Page() {
   }, [googleClientId]);
 
   // Helpers
-  const loginAs = (user: any) => {
-    const p = {
-      id: user.id || 'me_' + Date.now(),
+  const loginAs = (user: LoginUser) => {
+    const p: Player = {
+      id: user.id || `me_${Date.now()}`,
       name: user.name || 'You',
-      email: user.email,
-      avatar_url: user.avatar || user.avatar_url,
-      avatar: user.avatar || user.avatar_url,
-      x: user.x || 1000,
-      y: user.y || 900,
+      email: user.email || null,
+      avatarUrl: user.avatarUrl || user.avatar_url || user.avatar || '',
+      x: user.x ?? 1000,
+      y: user.y ?? 900,
       status: user.status || 'Hei Oslo! 👋',
       hat: user.hat || customHat,
       acc: user.acc || customAcc,
       color: user.color || customColor,
-      level: user.level || 5,
+      level: user.level ?? 5,
     };
-    setCurrentUser(p as any);
+    setCurrentUser(p);
     setStatusInput(p.status);
     setShowLogin(false);
     localStorage.setItem('oslo_user_next', JSON.stringify(p));
@@ -428,9 +548,8 @@ export default function Page() {
       id: p.id,
       name: p.name,
       email: p.email || null,
-      avatarUrl: p.avatar_url,
+      avatarUrl: avatarOf(p),
       googleToken: user.googleToken,
-      googleClientId: user.googleClientId,
     });
 
     track('move', 'login', { x: p.x, y: p.y });
@@ -458,43 +577,75 @@ export default function Page() {
     }
   };
 
-  const moveTo = useCallback((x:number,y:number, usePath=true)=>{
-    if (!currentUser) return;
-    x=Math.max(40,Math.min(MAP_SIZE.w-40,x)); y=Math.max(40,Math.min(MAP_SIZE.h-40,y));
-    if (usePath) {
-      const path=findPath(currentUser.x, currentUser.y, x, y);
-      pathQueueRef.current=path; setPathPreview(path);
-    } else {
-      pathQueueRef.current=[]; setPathPreview([]);
-      setCurrentUser({...currentUser, targetX:x, targetY:y, moving:true});
-    }
-    // collectibles check
-    setCollectibles(prev=>prev.map(c=>{
-      if(!c.collected && Math.hypot(c.x-x,c.y-y)<90){
-        if (socket.connected) {
-          socket.emit('collect', { itemId: c.id, itemType: c.type });
-        } else {
-          setCoinCount(co=>co+20);
-          setXp(x=>x+15);
-        }
-        coinPopAnimation(20);
-        track('collect',c.type,{x:c.x,y:c.y});
-        audio.coin();
-        if(c.type==='gem'){ screenShake(4); }
-        return {...c,collected:true};
-      }
-      return c;
-    }));
-    // landmarks
-    LANDMARKS.forEach(l=>{
-      if(Math.hypot(l.x-x,l.y-y)<120 && !discovered.has(l.id)){
-        setDiscovered(d=>new Set([...d,l.id]));
-        setXp(x=>x+50);
-        setCoinCount(c=>c+30);
-        track('landmark_discover',l.id,{x:l.x,y:l.y});
-      }
+  const advanceQuest = useCallback((questId: string, amount = 1) => {
+    const current = questsRef.current;
+    let completionReward = 0;
+    const updated = current.map(quest => {
+      if (quest.id !== questId || quest.done) return quest;
+      const progress = Math.min(quest.total, quest.progress + amount);
+      const done = progress >= quest.total;
+      if (done) completionReward = quest.reward;
+      return { ...quest, progress, done };
     });
-  },[currentUser, discovered]);
+    questsRef.current = updated;
+    setQuests(updated);
+    if (completionReward) {
+      setCoinCount(coins => coins + completionReward);
+      track('quest_complete', questId);
+      setNotice(`Quest complete! +${completionReward} coins`);
+    }
+  }, []);
+
+  const collectOne = useCallback((item: Collectible, source?: HTMLElement) => {
+    if (item.collected) return;
+    setCollectibles(previous => previous.map(current => current.id === item.id ? { ...current, collected: true } : current));
+    if (socket.connected) socket.emit('collect', { itemId: item.id });
+    else {
+      const reward = item.type === 'gem' ? 80 : item.type === 'heart' ? 40 : item.type === 'coffee' ? 30 : 20;
+      setCoinCount(coins => coins + reward);
+      setXp(value => value + 15);
+    }
+    coinPopAnimation(item.type === 'gem' ? 80 : 20);
+    if (source) popScale(source);
+    if (item.type === 'gem') screenShake(6);
+    track('collect', item.type, { x: item.x, y: item.y });
+    audio.coin();
+    advanceQuest('q3');
+  }, [advanceQuest]);
+
+  const moveTo = useCallback((x: number, y: number, usePath = true) => {
+    if (!currentUser) return;
+    const targetX = Math.max(40, Math.min(MAP_SIZE.w - 40, x));
+    const targetY = Math.max(40, Math.min(MAP_SIZE.h - 40, y));
+    if (usePath) {
+      const path = findPath(currentUser.x, currentUser.y, targetX, targetY);
+      pathQueueRef.current = path;
+      setPathPreview(path);
+    } else {
+      pathQueueRef.current = [];
+      setPathPreview([]);
+      setCurrentUser({ ...currentUser, targetX, targetY, moving: true });
+    }
+  }, [currentUser]);
+
+  // Resolve pickups and discoveries against the explorer's actual position,
+  // rather than the clicked destination. This keeps movement, rewards and
+  // server-side range checks aligned.
+  useEffect(() => {
+    if (!currentUser) return;
+    collectibles
+      .filter(item => !item.collected && Math.hypot(item.x - currentUser.x, item.y - currentUser.y) < 64)
+      .forEach(item => collectOne(item));
+
+    LANDMARKS.forEach(landmark => {
+      if (Math.hypot(landmark.x - currentUser.x, landmark.y - currentUser.y) >= 120 || discovered.has(landmark.id)) return;
+      setDiscovered(previous => new Set([...previous, landmark.id]));
+      setXp(value => value + 50);
+      setCoinCount(coins => coins + 30);
+      track('landmark_discover', landmark.id, { x: landmark.x, y: landmark.y });
+      if (landmark.id === 'gruner') advanceQuest('q2');
+    });
+  }, [advanceQuest, collectOne, collectibles, currentUser, discovered]);
 
   const onMouseDown=(e:React.MouseEvent)=>{
     if ((e.target as HTMLElement).closest('.player-pin, .collectible, .landmark-dot')) return;
@@ -551,7 +702,38 @@ export default function Page() {
     audio.pop();
   };
 
+  const submitFeedback = () => {
+    if (!feedbackTitle.trim()) {
+      setNotice('Add a short title so the QA team can reproduce the issue.');
+      return;
+    }
+    if (!socket.connected || !currentUser) {
+      setNotice('Connect to the live playtest server before sending feedback.');
+      return;
+    }
+    socket.emit('playtest_report', {
+      category: feedbackCategory,
+      severity: feedbackSeverity,
+      title: feedbackTitle.trim(),
+      reproduction: feedbackReproduction.trim(),
+      diagnostics: {
+        fps,
+        socketStatus,
+        x: Math.round(currentUser.x),
+        y: Math.round(currentUser.y),
+        district: getDistrictForPosition(currentUser.x, currentUser.y).id,
+        weather: weather?.desc || 'unknown',
+        userAgent: navigator.userAgent.slice(0, 180),
+      },
+    });
+    setNotice('Sending report to the live QA queue…');
+  };
+
   const dailyShop = getDailyShop(SHOP_ITEMS);
+  const worldPlayers = currentUser ? [currentUser, ...players] : players;
+  const visiblePlayers = viewportSize.w > 0
+    ? PerformanceMonitor.cullPlayers(worldPlayers, mapOffset, mapScale, viewportSize)
+    : worldPlayers;
   const district = currentUser ? getDistrictForPosition(currentUser.x, currentUser.y) : null;
   const funnel = getFunnel();
   const { level: lvlCalc, progress: lvlProg, nextReq } = xpToLevel(xp);
@@ -616,7 +798,7 @@ export default function Page() {
             <div style={{ width:60, height:6, background:'#e1e8e6', borderRadius:999 }}><div style={{ width:(lvlProg/nextReq)*100+'%', height:'100%', background:'linear-gradient(90deg,#E9C46A,#E76F51)', borderRadius:999 }}></div></div>
             <span style={{ fontSize:11, color:'#6b7d87', fontWeight:600 }}>{lvlProg}/{nextReq} XP • {lang.toUpperCase()}</span>
           </div>
-          <div style={{ display:'flex', gap:6, background:'linear-gradient(180deg,#fff7d6,#ffeeb1)', border:'1px solid #f5d77a', borderRadius:999, padding:'6px 12px', fontWeight:700, fontSize:13 }}>🪙 {coinCount.toLocaleString()} • {walkKm.toFixed(1)}km • {district?.name} {district?.emoji}</div>
+          <div style={{ display:'flex', gap:6, background:'linear-gradient(180deg,#fff7d6,#ffeeb1)', border:'1px solid #f5d77a', borderRadius:999, padding:'6px 12px', fontWeight:700, fontSize:13 }}>🪙 {coinCount.toLocaleString()} • {walkKm.toFixed(1)}km • {district?.name}</div>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
           <div style={{ display:'flex', alignItems:'center', gap:8, background:'white', border:'1px solid #e3eaec', borderRadius:999, padding:'6px 6px 6px 14px', width:380 }}>
@@ -640,13 +822,14 @@ export default function Page() {
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
           <button onClick={()=>setShowShop(true)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>🛍️</button>
           <button onClick={()=>setShowBag(true)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>🎒</button>
-          <button onClick={()=>setShowPhoto(true)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>📸</button>
+          <button onClick={()=>setShowPhoto(true)} aria-label="Photo mode" title="Photo mode" style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>📸</button>
+          <button onClick={()=>setShowFeedback(true)} aria-label="Send playtest feedback" title="Send playtest feedback" style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'#fff8df' }}>🐞</button>
           <button onClick={()=>setUseRealMap(v=>!v)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>{useRealMap?'🎨':'🗺️'}</button>
-          <button onClick={()=>setNightMode(v=>!v)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>{nightMode?'☀️':'🌙'}</button>
+          <button onClick={() => setNightMode(value => { const next = !value; if (next) advanceQuest('q4'); return next; })} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>{nightMode?'☀️':'🌙'}</button>
           <button onClick={()=>setSnowEnabled(v=>!v)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>❄️</button>
           <button onClick={()=>{ const nl=lang==='en'?'no':'en'; setLang(nl); localStorage.setItem('oslo_lang',nl); }} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>{lang==='en'?'🇳🇴':'🇬🇧'}</button>
           <button onClick={()=>setShowSettings(true)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>⚙️</button>
-          <div style={{ display:'flex', alignItems:'center', gap:8, background:'white', border:'1px solid #e2e9eb', borderRadius:999, padding:'4px 12px 4px 4px' }}><img src={currentUser?.avatar_url||currentUser?.avatar||''} style={{ width:32, height:32, borderRadius:'50%' }} alt="" /><span style={{ fontWeight:600, fontSize:13 }}>{currentUser?.name.split(' ')[0]}</span></div>
+          <div style={{ display:'flex', alignItems:'center', gap:8, background:'white', border:'1px solid #e2e9eb', borderRadius:999, padding:'4px 12px 4px 4px' }}><img src={currentUser ? avatarOf(currentUser) : ''} style={{ width:32, height:32, borderRadius:'50%' }} alt="" /><span style={{ fontWeight:600, fontSize:13 }}>{currentUser?.name.split(' ')[0]}</span></div>
         </div>
       </header>
 
@@ -656,9 +839,9 @@ export default function Page() {
           <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
             {[currentUser, ...players].filter(Boolean).slice(0,20).map((p:any)=>(
               <div key={p.id} onClick={()=>setShowPlayerModal(p)} style={{ display:'flex', gap:10, padding:'8px 10px', borderRadius:14, cursor:'pointer', background:p.id===currentUser?.id?'#f0f7f5':'transparent' }}>
-                <img src={p.avatar_url||p.avatar} style={{ width:36, height:36, borderRadius:'50%' }} alt="" />
+                <img src={avatarOf(p)} style={{ width:36, height:36, borderRadius:'50%' }} alt="" />
                 <div style={{ flex:1, minWidth:0 }}><div style={{ fontWeight:600, fontSize:13, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{p.name}</div><div style={{ fontSize:11, color:'#6d818c', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{p.status}</div></div>
-                <div style={{ fontSize:10, background:'#f2f6f7', padding:'2px 6px', borderRadius:999, fontWeight:600 }}>{Math.round(Math.hypot(p.x-currentUser.x,p.y-currentUser.y)/6)}m</div>
+                <div style={{ fontSize:10, background:'#f2f6f7', padding:'2px 6px', borderRadius:999, fontWeight:600 }}>{Math.round(Math.hypot(p.x - (currentUser?.x ?? p.x), p.y - (currentUser?.y ?? p.y)) / 6)}m</div>
               </div>
             ))}
           </div>
@@ -684,23 +867,23 @@ export default function Page() {
           <canvas ref={snowCanvasRef} style={{ position:'absolute', inset:0, zIndex:4, pointerEvents:'none', opacity:snowEnabled?1:0 }} />
           {nightMode && <div style={{ position:'absolute', inset:0, zIndex:3, background:'radial-gradient(70% 60% at 50% 20%, rgba(80,120,255,0.18), rgba(10,15,35,0.55))', pointerEvents:'none' }}><div style={{ position:'absolute', inset:0, backgroundImage:"url('/assets/aurora.jpg')", backgroundSize:'cover', mixBlendMode:'overlay', opacity:0.25 }}></div></div>}
           <ParallaxWorld offset={mapOffset} scale={mapScale} />
-          <div style={{ position:'absolute', left:0, top:0, width:MAP_SIZE.w, height:MAP_SIZE.h, backgroundImage: useRealMap ? 'none' : "url('/assets/map.jpg')", backgroundSize:'cover', borderRadius:24, boxShadow:'0 20px 80px rgba(0,0,0,0.18)', transformOrigin:'0 0', transform:`translate(${mapOffset.x}px,${mapOffset.y}px) scale(${mapScale})`, willChange:'transform' }}>
+          <div style={{ position:'absolute', left:0, top:0, width:MAP_SIZE.w, height:MAP_SIZE.h, backgroundImage: useRealMap ? "url('/assets/districts.jpg')" : "url('/assets/map.jpg')", backgroundSize:'cover', borderRadius:24, boxShadow:'0 20px 80px rgba(0,0,0,0.18)', transformOrigin:'0 0', transform:`translate(${mapOffset.x}px,${mapOffset.y}px) scale(${mapScale})`, willChange:'transform' }}>
             {/* Path preview */}
             {pathPreview.length>1 && <svg width={MAP_SIZE.w} height={MAP_SIZE.h} style={{ position:'absolute', left:0, top:0, pointerEvents:'none' }}><path d={`M ${pathPreview.map(p=>`${p.x} ${p.y}`).join(' L ')}`} stroke="rgba(38,70,83,0.25)" strokeWidth="4" strokeDasharray="10 8" fill="none" strokeLinecap="round" /></svg>}
             {collectibles.filter(c=>!c.collected).map(c=>(
-              <div key={c.id} onClick={e=>{ e.stopPropagation(); setCollectibles(prev=>prev.map(x=>x.id===c.id?{...x,collected:true}:x)); setCoinCount(co=>co+20); setXp(x=>x+15); coinPopAnimation(20); popScale(e.currentTarget as HTMLElement); if(c.type==='gem') screenShake(6); audio.coin(); track('collect',c.type,{x:c.x,y:c.y}); setQuests(qs=>qs.map(q=>q.id==='q3'?{...q,progress:Math.min(q.total,q.progress+1),done:q.progress+1>=q.total}:q)); }} style={{ position:'absolute', left:c.x, top:c.y, width:42, height:42, borderRadius:'50%', background:'radial-gradient(120% 120% at 30% 20%, #fff7c2, #e9c46a)', border:'2px solid white', boxShadow:'0 6px 16px rgba(233,196,106,0.5)', display:'grid', placeItems:'center', fontSize:20, transform:'translate(-50%,-50%)', cursor:'pointer', animation:'coinFloat 3s ease-in-out infinite' }}>{c.icon}</div>
+              <div key={c.id} className="collectible" onClick={e => { e.stopPropagation(); moveTo(c.x, c.y, true); }} style={{ position:'absolute', left:c.x, top:c.y, width:42, height:42, borderRadius:'50%', background:'radial-gradient(120% 120% at 30% 20%, #fff7c2, #e9c46a)', border:'2px solid white', boxShadow:'0 6px 16px rgba(233,196,106,0.5)', display:'grid', placeItems:'center', fontSize:20, transform:'translate(-50%,-50%)', cursor:'pointer', animation:'coinFloat 3s ease-in-out infinite' }}>{c.icon}</div>
             ))}
             {LANDMARKS.map(l=>(
-              <div key={l.id} onClick={e=>{ e.stopPropagation(); const rect=viewportRef.current?.getBoundingClientRect(); if(rect){ setMapOffset({ x:rect.width/2-l.x*mapScale, y:rect.height/2-l.y*mapScale }); } moveTo(l.x,l.y,true); }} style={{ position:'absolute', left:l.x, top:l.y, width:58, height:58, borderRadius:18, background:'white', border:'2px solid white', boxShadow:'0 8px 24px rgba(0,0,0,0.16)', display:'grid', placeItems:'center', fontSize:26, transform:'translate(-50%,-50%)', cursor:'pointer' }}>{l.emoji}</div>
+              <div key={l.id} className="landmark-dot" onClick={e=>{ e.stopPropagation(); const rect=viewportRef.current?.getBoundingClientRect(); if(rect){ setMapOffset({ x:rect.width/2-l.x*mapScale, y:rect.height/2-l.y*mapScale }); } moveTo(l.x,l.y,true); }} style={{ position:'absolute', left:l.x, top:l.y, width:58, height:58, borderRadius:18, background:'white', border:'2px solid white', boxShadow:'0 8px 24px rgba(0,0,0,0.16)', display:'grid', placeItems:'center', fontSize:26, transform:'translate(-50%,-50%)', cursor:'pointer' }}>{l.emoji}</div>
             ))}
             {NPCS.map(npc=>(
               <div key={npc.id} style={{ position:'absolute', left:npc.x, top:npc.y-70, transform:'translate(-50%,-100%)', background:'rgba(38,70,83,0.9)', color:'white', padding:'4px 8px', borderRadius:999, fontSize:10, fontWeight:600, pointerEvents:'none' }}>{npc.name} {npc.emoji}</div>
             ))}
-            {[currentUser, ...players].filter(Boolean).map((p:any)=>(
-              <div key={p.id} onClick={e=>{ e.stopPropagation(); setShowPlayerModal(p); }} style={{ position:'absolute', left:p.x, top:p.y, transform:'translate(-50%,-100%)', display:'flex', flexDirection:'column', alignItems:'center', cursor:'pointer', zIndex:p.id===currentUser?.id?10:2 }}>
+            {visiblePlayers.map(p => (
+              <div key={p.id} className="player-pin" data-id={p.id} onClick={e=>{ e.stopPropagation(); setShowPlayerModal(p); }} style={{ position:'absolute', left:p.x, top:p.y, transform:'translate(-50%,-100%)', display:'flex', flexDirection:'column', alignItems:'center', cursor:'pointer', zIndex:p.id===currentUser?.id?10:2 }}>
                 <div style={{ background:p.id===currentUser?.id?'#264653':'white', color:p.id===currentUser?.id?'white':'#1a2a33', padding:'6px 12px', borderRadius:'18px 18px 18px 4px', fontSize:12, fontWeight:600, boxShadow:'0 6px 18px rgba(0,0,0,0.14)', maxWidth:180, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', marginBottom:8, animation:'bubbleIn .3s ease' }}>{p.status||''}</div>
-                <div style={{ position:'relative', width:56, height:56 }}>
-                  <img src={p.avatar_url||p.avatar} style={{ width:p.id===currentUser?.id?62:56, height:p.id===currentUser?.id?62:56, borderRadius:'50%', border:`3px solid ${p.id===currentUser?.id?customColor:(p.color||'white')}`, boxShadow:'0 6px 18px rgba(0,0,0,0.18)', objectFit:'cover', animation: p.moving ? 'walkBob 0.4s ease-in-out infinite' : 'breathe 2s ease-in-out infinite' }} alt="" />
+                <div className="avatar-wrap" style={{ position:'relative', width:56, height:56 }}>
+                  <img src={avatarOf(p)} style={{ width:p.id===currentUser?.id?62:56, height:p.id===currentUser?.id?62:56, borderRadius:'50%', border:`3px solid ${p.id===currentUser?.id?customColor:(p.color||'white')}`, boxShadow:'0 6px 18px rgba(0,0,0,0.18)', objectFit:'cover', animation: p.moving ? 'walkBob 0.4s ease-in-out infinite' : 'breathe 2s ease-in-out infinite' }} alt="" />
                   <div style={{ position:'absolute', left:'50%', top:-10, transform:'translateX(-50%)', fontSize:26, filter:'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }}>{p.id===currentUser?.id?customHat:p.hat}</div>
                   <div style={{ position:'absolute', right:-6, bottom:2, fontSize:16, background:'white', borderRadius:'50%', width:22, height:22, display:'grid', placeItems:'center', boxShadow:'0 2px 6px rgba(0,0,0,0.15)' }}>{p.id===currentUser?.id?customAcc:p.acc}</div>
                 </div>
@@ -745,19 +928,16 @@ export default function Page() {
         <div onClick={()=>setShowPlayerModal(null)} style={{ position:'fixed', inset:0, background:'rgba(20,32,38,0.48)', backdropFilter:'blur(14px)', display:'grid', placeItems:'center', zIndex:50 }}>
           <div onClick={e=>e.stopPropagation()} style={{ background:'rgba(255,255,255,0.96)', borderRadius:28, padding:20, width:380, boxShadow:'0 30px 80px rgba(0,0,0,0.28)' }}>
             <div style={{ display:'flex', gap:14, alignItems:'center', marginBottom:12 }}>
-              <img src={showPlayerModal.avatar_url||showPlayerModal.avatar} style={{ width:64, height:64, borderRadius:'50%' }} alt="" />
+              <img src={avatarOf(showPlayerModal)} style={{ width:64, height:64, borderRadius:'50%' }} alt="" />
               <div><b style={{ fontSize:18 }}>{showPlayerModal.name}</b><br /><small style={{ color:'#6d818c' }}>{showPlayerModal.status}</small></div>
             </div>
             <div style={{ display:'flex', gap:8 }}>
               <button onClick={()=>{ setShowPlayerModal(null); const rect=viewportRef.current?.getBoundingClientRect(); if(rect) setMapOffset({ x:rect.width/2-showPlayerModal.x*mapScale, y:rect.height/2-showPlayerModal.y*mapScale }); moveTo(showPlayerModal.x, showPlayerModal.y, true); }} style={{ flex:1, height:40, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>📍 Visit (A*)</button>
               <button onClick={() => {
                 setShowPlayerModal(null);
-                if (socket.connected) {
-                  socket.emit('wave', { targetId: showPlayerModal.id });
-                } else {
-                  setCoinCount(c => c + 10);
-                  setQuests(qs => qs.map(q => q.id === 'q1' ? { ...q, progress: Math.min(q.total, q.progress + 1), done: q.progress + 1 >= q.total } : q));
-                }
+                if (socket.connected) socket.emit('wave', { targetId: showPlayerModal.id });
+                else setCoinCount(c => c + 10);
+                advanceQuest('q1');
                 track('chat', 'wave', { x: showPlayerModal.x, y: showPlayerModal.y });
                 audio.pop();
               }} style={{ flex: 1, height: 40, borderRadius: 12, border: 'none', background: '#264653', color: 'white', fontWeight: 700 }}>👋 Wave</button>
@@ -781,13 +961,13 @@ export default function Page() {
                       if (item.type === 'hat') setCustomHat(item.emoji);
                       if (item.type === 'acc') setCustomAcc(item.emoji);
                       if (socket.connected) {
-                        socket.emit('shop_buy', { itemId: item.id, price: 0, emoji: item.emoji, itemType: item.type });
+                        socket.emit('shop_buy', { itemId: item.id });
                       }
                       return;
                     }
                     if (coinCount < item.price) return alert('Not enough');
                     if (socket.connected) {
-                      socket.emit('shop_buy', { itemId: item.id, price: item.price, emoji: item.emoji, itemType: item.type });
+                      socket.emit('shop_buy', { itemId: item.id });
                     } else {
                       setCoinCount(c => c - item.price);
                       setInventory(inv => ({ ...inv, [item.id]: 1 }));
@@ -824,7 +1004,7 @@ export default function Page() {
             <div style={{ display:'grid', gridTemplateColumns:'140px 1fr', gap:16 }}>
               <div style={{ textAlign:'center' }}>
                 <div style={{ width:120, height:120, borderRadius:'50%', background:'linear-gradient(180deg,#eaf6fb,#fefae0)', border:`4px solid ${customColor}`, display:'grid', placeItems:'center', position:'relative', margin:'0 auto' }}>
-                  <img src={currentUser?.avatar_url||currentUser?.avatar||''} style={{ width:100, height:100, borderRadius:'50%' }} alt="" />
+                  <img src={currentUser ? avatarOf(currentUser) : ''} style={{ width:100, height:100, borderRadius:'50%' }} alt="" />
                   <div style={{ position:'absolute', left:'50%', top:-12, transform:'translateX(-50%)', fontSize:30 }}>{customHat}</div>
                   <div style={{ position:'absolute', right:-4, bottom:-2, background:'white', borderRadius:'50%', width:28, height:28, display:'grid', placeItems:'center' }}>{customAcc}</div>
                 </div>
@@ -847,15 +1027,48 @@ export default function Page() {
             <div style={{ width:'100%', height:220, borderRadius:16, backgroundImage:"url('/assets/map.jpg')", backgroundSize:'cover', filter: photoFilter==='vivid'?'saturate(1.4)': photoFilter==='cozy'?'sepia(0.2) saturate(1.2)': photoFilter==='aurora'?'hue-rotate(40deg) saturate(1.3)':'grayscale(0.3)', position:'relative' }}>
               <div style={{ position:'absolute', left:'50%', top:'50%', transform:'translate(-50%,-100%)', display:'flex', flexDirection:'column', alignItems:'center' }}>
                 <div style={{ background:'#264653', color:'white', padding:'4px 10px', borderRadius:12, fontSize:12 }}>{statusInput}</div>
-                <img src={currentUser?.avatar_url||''} style={{ width:56, height:56, borderRadius:'50%', border:`3px solid ${customColor}`, marginTop:6 }} alt="" />
+                <img src={currentUser ? avatarOf(currentUser) : ''} style={{ width:56, height:56, borderRadius:'50%', border:`3px solid ${customColor}`, marginTop:6 }} alt="" />
               </div>
               <div style={{ position:'absolute', bottom:8, left:8, background:'rgba(0,0,0,0.6)', color:'white', padding:'4px 8px', borderRadius:999, fontSize:10 }}>OSLOVILLE • {district?.name} • {new Date().toLocaleDateString()} • {coinCount}🪙</div>
             </div>
-            <div style={{ display:'flex', gap:6, marginTop:12 }}>{['vivid','cozy','aurora','vintage'].map(f=><button key={f} onClick={()=>setPhotoFilter(f)} style={{ flex:1, height:32, borderRadius:999, border:photoFilter===f?'2px solid #2A9D8F':'1px solid #dde7e8', background:photoFilter===f?'#e6f4f2':'white', fontSize:11, fontWeight:600 }}>{f}</button>)}</div>
+            <div style={{ display:'flex', gap:6, marginTop:12 }}>{(['vivid', 'cozy', 'aurora', 'vintage'] as PhotoFilter[]).map(f=><button key={f} onClick={()=>setPhotoFilter(f)} style={{ flex:1, height:32, borderRadius:999, border:photoFilter===f?'2px solid #2A9D8F':'1px solid #dde7e8', background:photoFilter===f?'#e6f4f2':'white', fontSize:11, fontWeight:600 }}>{f}</button>)}</div>
             <div style={{ display:'flex', gap:8, marginTop:12 }}><button onClick={()=>setShowPhoto(false)} style={{ flex:1, height:40, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>Close</button><button onClick={()=>{ setShowPhoto(false); setCoinCount(c=>c+20); setBadges(b=>[...b,'📸']); track('photo_share',photoFilter); audio.tone(800,0.2,'sine',0.2); }} style={{ flex:1, height:40, borderRadius:12, border:'none', background:'#264653', color:'white', fontWeight:700 }}>Share +20🪙</button></div>
           </div>
         </div>
       )}
+
+      {showFeedback && (
+        <div onClick={() => setShowFeedback(false)} style={{ position:'fixed', inset:0, background:'rgba(20,32,38,0.56)', backdropFilter:'blur(14px)', display:'grid', placeItems:'center', zIndex:60, padding:16 }}>
+          <section onClick={event => event.stopPropagation()} aria-label="Playtest feedback" style={{ background:'white', borderRadius:28, padding:22, width:'min(460px, 100%)', boxShadow:'0 30px 80px rgba(0,0,0,0.28)' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'start', gap:12 }}>
+              <div><h2 style={{ margin:0 }}>Playtest report 🐞</h2><p style={{ margin:'6px 0 0', color:'#647780', fontSize:13 }}>Send a reproducible issue directly to the live QA queue.</p></div>
+              <button onClick={() => setShowFeedback(false)} aria-label="Close feedback" style={{ width:36, height:36, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>✕</button>
+            </div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginTop:16 }}>
+              <label style={{ fontSize:12, fontWeight:700 }}>Area
+                <select value={feedbackCategory} onChange={event => setFeedbackCategory(event.target.value)} style={{ display:'block', width:'100%', marginTop:5, height:38, borderRadius:10, border:'1px solid #dbe5e7', padding:'0 8px' }}>
+                  <option value="gameplay">Gameplay</option><option value="multiplayer">Multiplayer</option><option value="performance">Performance</option><option value="ui">UI / accessibility</option><option value="economy">Economy</option>
+                </select>
+              </label>
+              <label style={{ fontSize:12, fontWeight:700 }}>Impact
+                <select value={feedbackSeverity} onChange={event => setFeedbackSeverity(event.target.value as typeof feedbackSeverity)} style={{ display:'block', width:'100%', marginTop:5, height:38, borderRadius:10, border:'1px solid #dbe5e7', padding:'0 8px' }}>
+                  <option value="blocker">Blocker — cannot play</option><option value="major">Major — core feature broken</option><option value="minor">Minor — polish issue</option><option value="idea">Idea / improvement</option>
+                </select>
+              </label>
+            </div>
+            <label style={{ display:'block', fontSize:12, fontWeight:700, marginTop:12 }}>Short title
+              <input value={feedbackTitle} onChange={event => setFeedbackTitle(event.target.value)} maxLength={140} placeholder="e.g. Pickup does not reward after walking to it" style={{ display:'block', boxSizing:'border-box', width:'100%', marginTop:5, height:40, borderRadius:10, border:'1px solid #dbe5e7', padding:'0 10px' }} />
+            </label>
+            <label style={{ display:'block', fontSize:12, fontWeight:700, marginTop:12 }}>Steps to reproduce / expected result
+              <textarea value={feedbackReproduction} onChange={event => setFeedbackReproduction(event.target.value)} maxLength={1200} placeholder="1. …  2. …  Expected: …  Actual: …" style={{ display:'block', boxSizing:'border-box', width:'100%', minHeight:112, resize:'vertical', marginTop:5, borderRadius:10, border:'1px solid #dbe5e7', padding:10, fontFamily:'inherit' }} />
+            </label>
+            <p style={{ margin:'9px 0 0', fontSize:11, color:'#71838c' }}>Attached automatically: FPS, live connection state, map coordinates, district, weather and browser signature.</p>
+            <button onClick={submitFeedback} style={{ width:'100%', height:46, marginTop:14, border:0, borderRadius:14, background:'linear-gradient(135deg,#264653,#2A9D8F)', color:'white', fontWeight:800 }}>Send to live QA queue</button>
+          </section>
+        </div>
+      )}
+
+      {notice && <div role="status" style={{ position:'fixed', left:'50%', bottom:24, transform:'translateX(-50%)', zIndex:100, maxWidth:'min(500px, calc(100vw - 32px))', background:'#264653', color:'white', borderRadius:999, padding:'10px 18px', fontSize:13, fontWeight:600, boxShadow:'0 12px 30px rgba(0,0,0,.22)' }}>{notice}<button onClick={() => setNotice('')} aria-label="Dismiss notification" style={{ marginLeft:10, border:0, background:'transparent', color:'white', fontSize:16 }}>×</button></div>}
 
       {showSettings && (
         <div onClick={()=>setShowSettings(false)} style={{ position:'fixed', inset:0, background:'rgba(20,32,38,0.48)', backdropFilter:'blur(14px)', display:'grid', placeItems:'center', zIndex:50 }}>

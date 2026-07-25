@@ -1,0 +1,46 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;800&display=swap');
+
+:root { color-scheme: light; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #fefae0; color: #1b3038; }
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; overflow: hidden; }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid #e9c46a; outline-offset: 2px; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+img { display: block; }
+
+.mobile-joystick { display: none; }
+
+@media (max-width: 1100px) {
+  header > div:nth-child(2) { display: none !important; }
+  header > div:nth-child(3) > button:nth-child(4),
+  header > div:nth-child(3) > button:nth-child(7),
+  header > div:nth-child(3) > div { display: none !important; }
+}
+
+@media (max-width: 820px) {
+  html, body { overflow: hidden; }
+  header { height: 58px !important; padding: 0 9px !important; gap: 7px !important; }
+  header > div:first-child > div:nth-child(2),
+  header > div:first-child > div:nth-child(3),
+  header > div:nth-child(3) > button:nth-child(1),
+  header > div:nth-child(3) > button:nth-child(2) { display: none !important; }
+  header > div:first-child { min-width: 0; }
+  header > div:first-child > div:first-child b { font-size: 13px; }
+  header > div:first-child > div:first-child span { display: none; }
+  header > div:nth-child(3) { gap: 5px !important; }
+  header > div:nth-child(3) > button { width: 34px !important; height: 34px !important; }
+  header + div > aside { display: none !important; }
+  header + div > main { width: 100%; }
+  .mobile-joystick { display: block !important; }
+}
+
+@media (max-width: 520px) {
+  header > div:nth-child(3) > button:nth-child(5),
+  header > div:nth-child(3) > button:nth-child(6) { display: none !important; }
+  .loader-card, .login-card { width: min(420px, calc(100vw - 28px)) !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: 0.001ms !important; }
+}

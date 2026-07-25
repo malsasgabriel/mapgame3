@@ -15,17 +15,20 @@ export class SendChat {
   constructor(private chatRepo: IChatRepository) {}
 
   async execute(params: SendChatParams): Promise<ChatMessage> {
+    const text = params.text.trim().replace(/\s+/g, ' ').slice(0, 120);
+    if (!text) throw new Error('EMPTY_CHAT_MESSAGE');
+
     const chatMsg: ChatMessage = {
-      id: params.id,
+      id: params.id.slice(0, 100),
       playerId: params.playerId,
       name: params.name,
       avatarUrl: params.avatarUrl,
-      text: params.text.slice(0, 120), // DB constraint: <= 120 chars
-      x: params.x,
-      y: params.y,
+      text,
+      x: Number.isFinite(params.x) ? params.x : null,
+      y: Number.isFinite(params.y) ? params.y : null,
       createdAt: new Date(),
     };
-    
-    return await this.chatRepo.save(chatMsg);
+
+    return this.chatRepo.save(chatMsg);
   }
 }

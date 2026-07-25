@@ -2,6 +2,7 @@ import { createServer } from 'http';
 import { initDatabase } from './infrastructure/db/connection';
 import { PostgreSQLPlayerRepository } from './adapters/repositories/PostgreSQLPlayerRepository';
 import { PostgreSQLChatRepository } from './adapters/repositories/PostgreSQLChatRepository';
+import { PostgreSQLPlaytestReportRepository } from './adapters/repositories/PostgreSQLPlaytestReportRepository';
 import { HttpController } from './adapters/controllers/HttpController';
 import { SocketController } from './adapters/controllers/SocketController';
 import { ExpressServer } from './infrastructure/web/ExpressServer';
@@ -19,10 +20,11 @@ async function bootstrap() {
     // 2. Instantiate Repositories (Data Access Layer)
     const playerRepo = new PostgreSQLPlayerRepository();
     const chatRepo = new PostgreSQLChatRepository();
+    const playtestReportRepo = new PostgreSQLPlaytestReportRepository();
 
     // 3. Instantiate Controllers (Adapter Layer)
-    const httpController = new HttpController(playerRepo);
-    const socketController = new SocketController(playerRepo, chatRepo);
+    const httpController = new HttpController(playerRepo, playtestReportRepo);
+    const socketController = new SocketController(playerRepo, chatRepo, playtestReportRepo);
 
     // 4. Instantiate Web Servers (Infrastructure Layer)
     const expressServer = new ExpressServer(httpController);

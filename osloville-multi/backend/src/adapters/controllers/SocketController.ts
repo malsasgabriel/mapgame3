@@ -6,6 +6,9 @@ import { MovePlayer } from '../../domain/use-cases/MovePlayer';
 import { SendChat } from '../../domain/use-cases/SendChat';
 import { CollectItem } from '../../domain/use-cases/CollectItem';
 import { BuyShopItem } from '../../domain/use-cases/BuyShopItem';
+import { getWorldCollectible } from '../../domain/world';
+import { IPlaytestReportRepository } from '../../domain/repositories/IPlaytestReportRepository';
+import { PlaytestSeverity } from '../../domain/entities/PlaytestReport';
 
 export class SocketController {
   // Map socket IDs to player IDs
@@ -21,10 +24,27 @@ export class SocketController {
   private buyShopItem: BuyShopItem;
 
   private io!: Server;
+  private eventWindows = new Map<string, number[]>();
+  private claimedCollectibles = new Set<string>();
+
+  private allowEvent(socket: Socket, event: string, limit: number, intervalMs: number): boolean {
+    const key = `${socket.id}:${event}`;
+    const now = Date.now();
+    const recent = (this.eventWindows.get(key) || []).filter(timestamp => now - timestamp < intervalMs);
+    if (recent.length >= limit) {
+      this.eventWindows.set(key, recent);
+      socket.emit('action_rejected', { event, code: 'RATE_LIMITED' });
+      return false;
+    }
+    recent.push(now);
+    this.eventWindows.set(key, recent);
+    return true;
+  }
 
   constructor(
     private playerRepo: IPlayerRepository,
-    private chatRepo: IChatRepository
+    private chatRepo: IChatRepository,
+    private playtestReports: IPlaytestReportRepository,
   ) {
     this.authenticatePlayer = new AuthenticatePlayer(playerRepo);
     this.movePlayer = new MovePlayer(playerRepo);
@@ -47,16 +67,15 @@ export class SocketController {
       email: string | null;
       avatarUrl: string;
       googleToken?: string;
-      googleClientId?: string;
     }) => {
+      if (!this.allowEvent(socket, 'join', 3, 60_000)) return;
       try {
-        const { player, isNew } = await this.authenticatePlayer.execute({
+        const { player } = await this.authenticatePlayer.execute({
           id: data.id,
           name: data.name,
           email: data.email,
           avatarUrl: data.avatarUrl,
           googleToken: data.googleToken,
-          googleClientId: data.googleClientId,
         });
 
         // Register session mapping
@@ -102,7 +121,7 @@ export class SocketController {
       discovered?: string[];
     }) => {
       const playerId = this.socketToPlayerMap.get(socket.id);
-      if (!playerId) return;
+      if (!playerId || !this.allowEvent(socket, 'move', 12, 1_000)) return;
 
       try {
         const updatedPlayer = await this.movePlayer.execute({
@@ -133,7 +152,7 @@ export class SocketController {
       y: number | null;
     }) => {
       const playerId = this.socketToPlayerMap.get(socket.id);
-      if (!playerId) return;
+      if (!playerId || !this.allowEvent(socket, 'chat', 6, 10_000)) return;
 
       try {
         const player = await this.playerRepo.findById(playerId);
@@ -149,8 +168,8 @@ export class SocketController {
           y: data.y,
         });
 
-        // Update player's status bubble to match chat message
-        await this.playerRepo.updateStatus(playerId, data.text);
+        // Keep the bubble in sync with the server-normalized message.
+        await this.playerRepo.updateStatus(playerId, chatMessage.text);
 
         // Broadcast chat message globally to all players
         this.io.emit('chat_message', chatMessage);
@@ -160,17 +179,27 @@ export class SocketController {
     });
 
     // COLLECT ITEM EVENT
-    socket.on('collect', async (data: {
-      itemId: string;
-      itemType: 'coin' | 'heart' | 'gem' | 'coffee' | 'mitten';
-    }) => {
+    socket.on('collect', async (data: { itemId: string }) => {
       const playerId = this.socketToPlayerMap.get(socket.id);
-      if (!playerId) return;
+      const collectible = typeof data.itemId === 'string' ? getWorldCollectible(data.itemId) : null;
+      if (!playerId || !collectible || !this.allowEvent(socket, 'collect', 12, 10_000)) return;
+
+      // The same world pickup can only be awarded once per server session.
+      if (this.claimedCollectibles.has(collectible.id)) {
+        socket.emit('action_rejected', { event: 'collect', code: 'ALREADY_COLLECTED' });
+        return;
+      }
 
       try {
+        const player = await this.playerRepo.findById(playerId);
+        if (!player || Math.hypot(player.x - collectible.x, player.y - collectible.y) > 190) {
+          socket.emit('action_rejected', { event: 'collect', code: 'TOO_FAR_AWAY' });
+          return;
+        }
+        this.claimedCollectibles.add(collectible.id);
         const result = await this.collectItem.execute({
           playerId,
-          itemType: data.itemType,
+          itemType: collectible.type,
         });
 
         if (result) {
@@ -188,27 +217,20 @@ export class SocketController {
           });
         }
       } catch (err) {
+        this.claimedCollectibles.delete(data.itemId);
         console.error('[Socket.io] Error collecting item:', err);
       }
     });
 
     // SHOP PURCHASE EVENT
-    socket.on('shop_buy', async (data: {
-      itemId: string;
-      price: number;
-      emoji: string;
-      itemType: 'hat' | 'acc';
-    }) => {
+    socket.on('shop_buy', async (data: { itemId: string }) => {
       const playerId = this.socketToPlayerMap.get(socket.id);
-      if (!playerId) return;
+      if (!playerId || !this.allowEvent(socket, 'shop_buy', 8, 10_000)) return;
 
       try {
         const result = await this.buyShopItem.execute({
           playerId,
           itemId: data.itemId,
-          price: data.price,
-          emoji: data.emoji,
-          itemType: data.itemType,
         });
 
         if (result) {
@@ -231,7 +253,7 @@ export class SocketController {
     // WAVE / SOCIAL EVENT
     socket.on('wave', async (data: { targetId: string }) => {
       const playerId = this.socketToPlayerMap.get(socket.id);
-      if (!playerId) return;
+      if (!playerId || !this.allowEvent(socket, 'wave', 12, 10_000) || typeof data.targetId !== 'string') return;
 
       try {
         const sender = await this.playerRepo.findById(playerId);
@@ -256,8 +278,55 @@ export class SocketController {
       }
     });
 
+    // REAL-TIME PLAYTEST REPORT
+    socket.on('playtest_report', async (data: {
+      category?: string;
+      severity?: PlaytestSeverity;
+      title?: string;
+      reproduction?: string;
+      diagnostics?: Record<string, unknown>;
+    }) => {
+      const playerId = this.socketToPlayerMap.get(socket.id);
+      if (!playerId || !this.allowEvent(socket, 'playtest_report', 6, 60_000)) return;
+      const severity: PlaytestSeverity = ['blocker', 'major', 'minor', 'idea'].includes(data.severity || '')
+        ? data.severity as PlaytestSeverity
+        : 'minor';
+      const title = typeof data.title === 'string' ? data.title.trim().slice(0, 140) : '';
+      if (!title) {
+        socket.emit('action_rejected', { event: 'playtest_report', code: 'TITLE_REQUIRED' });
+        return;
+      }
+
+      try {
+        const player = await this.playerRepo.findById(playerId);
+        if (!player) return;
+        const diagnostics = data.diagnostics && typeof data.diagnostics === 'object'
+          ? JSON.parse(JSON.stringify(data.diagnostics).slice(0, 4_000)) as Record<string, unknown>
+          : {};
+        const report = await this.playtestReports.create({
+          id: `report_${Date.now()}_${socket.id}`.slice(0, 100),
+          playerId,
+          playerName: player.name,
+          category: (typeof data.category === 'string' ? data.category : 'gameplay').trim().slice(0, 48) || 'gameplay',
+          severity,
+          title,
+          reproduction: (typeof data.reproduction === 'string' ? data.reproduction : '').trim().slice(0, 1200),
+          diagnostics,
+          status: 'new',
+          createdAt: new Date(),
+        });
+        socket.emit('playtest_reported', { id: report.id, createdAt: report.createdAt });
+      } catch (err) {
+        console.error('[Socket.io] Playtest report error:', err);
+        socket.emit('action_rejected', { event: 'playtest_report', code: 'REPORT_UNAVAILABLE' });
+      }
+    });
+
     // DISCONNECT
     socket.on('disconnect', async () => {
+      for (const key of this.eventWindows.keys()) {
+        if (key.startsWith(`${socket.id}:`)) this.eventWindows.delete(key);
+      }
       const playerId = this.socketToPlayerMap.get(socket.id);
       if (playerId) {
         console.log(`[Socket.io] Player disconnected: ${playerId}`);

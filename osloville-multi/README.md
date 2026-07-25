@@ -1,5 +1,7 @@
 # OSLOVILLE — Containerized Next.js + PostgreSQL + Socket.io (Clean Architecture)
 
+**For real-time professional tester sessions:** read [PLAYTEST.md](PLAYTEST.md). It includes the live bug-report queue and the three-client automated QA gate.
+
 OsloVille is a FarmVille-style cozy social map game centered on **real Oslo** with real-time multiplayer coordination, persistent player statistics, dynamic weather, custom cosmetics, and local/Google authentication.
 
 This version replaces the cloud-dependent Supabase backend with a fully self-hosted, Dockerized architecture suitable for native WSL execution.
