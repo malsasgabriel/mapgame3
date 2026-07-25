@@ -9,6 +9,7 @@ type Collectible = WorldPoint & { id: string; icon: string; collected: boolean }
 type Props = {
   players: Player[]; currentPlayerId?: string; landmarks: readonly Landmark[]; collectibles: readonly Collectible[];
   path: readonly WorldPoint[]; nightMode: boolean; tileFailureLabel: string;
+  focus?: WorldPoint & { nonce: number }; zoomRequest: number;
   onNavigate: (x: number, y: number) => void; onSelectPlayer: (id: string) => void; onLandmarkClick: (id: string) => void;
 };
 
@@ -16,13 +17,14 @@ const tileUrl = process.env.NEXT_PUBLIC_TILE_URL || 'https://{s}.tile.openstreet
 const attribution = process.env.NEXT_PUBLIC_TILE_ATTRIBUTION || '© OpenStreetMap contributors';
 const escape = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char));
 
-export function RealOsloMap({ players, currentPlayerId, landmarks, collectibles, path, nightMode, tileFailureLabel, onNavigate, onSelectPlayer, onLandmarkClick }: Props) {
+export function RealOsloMap({ players, currentPlayerId, landmarks, collectibles, path, nightMode, tileFailureLabel, focus, zoomRequest, onNavigate, onSelectPlayer, onLandmarkClick }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<import('leaflet').Map | null>(null);
   const leafletRef = useRef<typeof import('leaflet') | null>(null);
   const markersRef = useRef(new Map<string, import('leaflet').Marker>());
   const pathRef = useRef<import('leaflet').Polyline | null>(null);
   const callbacks = useRef({ onNavigate, onSelectPlayer, onLandmarkClick });
+  const lastZoomRequest = useRef(0);
   const [ready, setReady] = useState(false);
   const [tilesUnavailable, setTilesUnavailable] = useState(false);
 
@@ -44,6 +46,20 @@ export function RealOsloMap({ players, currentPlayerId, landmarks, collectibles,
     return () => { cancelled = true; markersRef.current.clear(); map?.remove(); mapRef.current = null; leafletRef.current = null; };
   }, []);
   useEffect(() => { mapRef.current?.getContainer().classList.toggle('oslo-real-map--night', nightMode); }, [nightMode]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !focus || focus.nonce === 0) return;
+    const point = xyToLatLng(focus.x, focus.y);
+    map.flyTo([point.lat, point.lng], Math.max(14, map.getZoom()), { animate: true, duration: 0.35 });
+  }, [focus, ready]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || zoomRequest === lastZoomRequest.current) return;
+    const delta = zoomRequest - lastZoomRequest.current;
+    lastZoomRequest.current = zoomRequest;
+    if (delta > 0) map.zoomIn(Math.min(delta, 2));
+    if (delta < 0) map.zoomOut(Math.min(-delta, 2));
+  }, [zoomRequest, ready]);
   useEffect(() => {
     const map = mapRef.current; const L = leafletRef.current; if (!ready || !map || !L) return;
     const active = new Set<string>();
