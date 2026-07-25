@@ -47,12 +47,13 @@ PLAYTEST_URL=http://localhost:8080 npm run playtest:realtime
 
 Скрипт поднимает три независимых Socket.io клиента и проверяет:
 
-1. join/presence;
+1. join/presence без offline «призраков» из БД;
 2. разрешённое сервером пошаговое движение;
 3. server-authoritative pickup и HUD update;
-4. доставку чата всем игрокам;
+4. доставку чата и обновление speech-bubble всем игрокам;
 5. server-authoritative покупку косметики;
-6. запись playtest report в очередь.
+6. reconnect той же учётной записи без ложного `player_left` и с восстановлением уже собранных pickup;
+7. запись playtest report в очередь.
 
 Он печатает JSON с `passed: true|false` и кодом возврата. Это smoke gate, а не замена людям: он ловит регрессии протокола до того, как тратить время тестеров.
 

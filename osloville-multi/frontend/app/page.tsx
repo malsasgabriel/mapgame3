@@ -186,10 +186,15 @@ export default function Page() {
   const [viewportSize, setViewportSize] = useState({ w: 0, h: 0 });
   const lastSyncRef = useRef(0);
   const pathQueueRef = useRef<{x:number,y:number}[]>([]);
+  const sessionRef = useRef<{ id: string; name: string; email: string | null; avatarUrl: string; googleToken?: string } | null>(null);
+  const currentUserRef = useRef<Player | null>(null);
+  const collectionCooldownRef = useRef(new Map<string, number>());
+  const claimedCollectiblesRef = useRef(new Set<string>());
 
   // Lang detect
   useEffect(() => { setLang(detectLang()); }, []);
   useEffect(() => { questsRef.current = quests; }, [quests]);
+  useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
 
   // Performance monitor
   useEffect(() => {
@@ -240,6 +245,9 @@ export default function Page() {
   useEffect(() => {
     const onConnect = () => {
       setSocketStatus('connected');
+      // Socket.io reconnects transparently; the game session must be joined
+      // again because the backend intentionally forgets disconnected sockets.
+      if (sessionRef.current) socket.emit('join', sessionRef.current);
     };
     const onDisconnect = () => {
       setSocketStatus('offline');
@@ -300,7 +308,14 @@ export default function Page() {
     };
 
     const onItemCollected = (data: { itemId: string; collectorId: string }) => {
+      claimedCollectiblesRef.current.add(data.itemId);
       setCollectibles(prev => prev.map(c => c.id === data.itemId ? { ...c, collected: true } : c));
+      if (data.collectorId === currentUserRef.current?.id) advanceQuest('q3');
+    };
+    const onWorldState = (data: { claimedItemIds?: string[] }) => {
+      const claimed = Array.isArray(data.claimedItemIds) ? data.claimedItemIds : [];
+      claimed.forEach(itemId => claimedCollectiblesRef.current.add(itemId));
+      setCollectibles(previous => previous.map(item => claimedCollectiblesRef.current.has(item.id) ? { ...item, collected: true } : item));
     };
 
     const onHudUpdate = (data: { coins: number; xp: number; level: number }) => {
@@ -337,8 +352,13 @@ export default function Page() {
       setFeedbackTitle('');
       setFeedbackReproduction('');
     };
-    const onActionRejected = (data: { event?: string; code?: string }) => {
+    const onActionRejected = (data: { event?: string; code?: string; itemId?: string }) => {
       if (data.event === 'playtest_report') setNotice('Report could not be sent. Please try again.');
+      if (data.event === 'collect' && data.itemId) {
+        collectionCooldownRef.current.set(data.itemId, Date.now() + 1_500);
+        setCollectibles(previous => previous.map(item => item.id === data.itemId ? { ...item, collected: false } : item));
+        setNotice(data.code === 'TOO_FAR_AWAY' ? 'Walk closer to the pickup before collecting it.' : 'That pickup is no longer available.');
+      }
     };
 
     socket.on('connect', onConnect);
@@ -351,6 +371,7 @@ export default function Page() {
     socket.on('player_updated', onPlayerUpdated);
     socket.on('chat_message', onChatMessage);
     socket.on('item_collected', onItemCollected);
+    socket.on('world_state', onWorldState);
     socket.on('hud_update', onHudUpdate);
     socket.on('shop_success', onShopSuccess);
     socket.on('waved_at', onWavedAt);
@@ -375,6 +396,7 @@ export default function Page() {
       socket.off('player_updated', onPlayerUpdated);
       socket.off('chat_message', onChatMessage);
       socket.off('item_collected', onItemCollected);
+      socket.off('world_state', onWorldState);
       socket.off('hud_update', onHudUpdate);
       socket.off('shop_success', onShopSuccess);
       socket.off('waved_at', onWavedAt);
@@ -402,7 +424,7 @@ export default function Page() {
       .then(response => response.ok ? response.json() : Promise.reject(new Error('World unavailable')))
       .then((data: { collectibles?: Omit<Collectible, 'collected'>[] }) => {
         if (!Array.isArray(data.collectibles)) return;
-        setCollectibles(data.collectibles.map(item => ({ ...item, collected: false })));
+        setCollectibles(data.collectibles.map(item => ({ ...item, collected: claimedCollectiblesRef.current.has(item.id) })));
       })
       .catch(() => undefined);
   }, []);
@@ -540,17 +562,16 @@ export default function Page() {
     setShowLogin(false);
     localStorage.setItem('oslo_user_next', JSON.stringify(p));
 
-    if (!socket.connected) {
-      socket.connect();
-    }
-
-    socket.emit('join', {
+    const session = {
       id: p.id,
       name: p.name,
       email: p.email || null,
       avatarUrl: avatarOf(p),
       googleToken: user.googleToken,
-    });
+    };
+    sessionRef.current = session;
+    if (socket.connected) socket.emit('join', session);
+    else socket.connect();
 
     track('move', 'login', { x: p.x, y: p.y });
   };
@@ -597,20 +618,23 @@ export default function Page() {
   }, []);
 
   const collectOne = useCallback((item: Collectible, source?: HTMLElement) => {
-    if (item.collected) return;
+    if (item.collected || (collectionCooldownRef.current.get(item.id) || 0) > Date.now()) return;
     setCollectibles(previous => previous.map(current => current.id === item.id ? { ...current, collected: true } : current));
-    if (socket.connected) socket.emit('collect', { itemId: item.id });
-    else {
+    if (socket.connected) {
+      // Coins, XP and quest progress arrive only after the authoritative
+      // `item_collected`/`hud_update` events, never from an optimistic client.
+      socket.emit('collect', { itemId: item.id });
+    } else {
       const reward = item.type === 'gem' ? 80 : item.type === 'heart' ? 40 : item.type === 'coffee' ? 30 : 20;
       setCoinCount(coins => coins + reward);
       setXp(value => value + 15);
+      advanceQuest('q3');
     }
     coinPopAnimation(item.type === 'gem' ? 80 : 20);
     if (source) popScale(source);
     if (item.type === 'gem') screenShake(6);
     track('collect', item.type, { x: item.x, y: item.y });
     audio.coin();
-    advanceQuest('q3');
   }, [advanceQuest]);
 
   const moveTo = useCallback((x: number, y: number, usePath = true) => {

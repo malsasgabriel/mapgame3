@@ -78,14 +78,26 @@ export class SocketController {
           googleToken: data.googleToken,
         });
 
-        // Register session mapping
+        // One active socket owns a player session. A reconnection replaces an
+        // older transport without allowing the old disconnect to emit a false
+        // `player_left` event or continue to submit actions.
+        const previousSocket = this.playerToSocketMap.get(player.id);
+        if (previousSocket && previousSocket.id !== socket.id) {
+          this.socketToPlayerMap.delete(previousSocket.id);
+          previousSocket.emit('session_replaced');
+          previousSocket.disconnect(true);
+        }
         this.socketToPlayerMap.set(socket.id, player.id);
         this.playerToSocketMap.set(player.id, socket);
 
         // Retrieve active players (real users + NPCs active in the last 1 hour)
         const oneHourAgo = new Date(Date.now() - 1000 * 60 * 60);
         const activePlayers = await this.playerRepo.getActivePlayersSince(oneHourAgo);
-        const otherPlayers = activePlayers.filter(p => p.id !== player.id);
+        // The database retains progress, but it is not a presence source. Only
+        // active sockets (and server-controlled NPCs) appear in the live list.
+        const otherPlayers = activePlayers.filter(p =>
+          p.id !== player.id && (p.id.startsWith('npc_') || this.playerToSocketMap.has(p.id)),
+        );
 
         // Fetch recent chat log (up to 30 messages)
         const chatHistory = await this.chatRepo.getRecent(30);
@@ -100,6 +112,9 @@ export class SocketController {
           otherPlayers,
           chatHistory,
         });
+        // Clients need this snapshot after reconnecting; otherwise an item
+        // collected while their transport was down would visually respawn.
+        socket.emit('world_state', { claimedItemIds: [...this.claimedCollectibles] });
 
         // Broadcast to other players
         socket.broadcast.emit('player_joined', player);
@@ -168,11 +183,13 @@ export class SocketController {
           y: data.y,
         });
 
-        // Keep the bubble in sync with the server-normalized message.
+        // Keep every map bubble in sync with the server-normalized message.
         await this.playerRepo.updateStatus(playerId, chatMessage.text);
+        player.status = chatMessage.text;
 
-        // Broadcast chat message globally to all players
+        // Broadcast chat and the updated presence snapshot globally.
         this.io.emit('chat_message', chatMessage);
+        this.io.emit('player_updated', player);
       } catch (err) {
         console.error('[Socket.io] Error handling chat message:', err);
       }
@@ -186,14 +203,14 @@ export class SocketController {
 
       // The same world pickup can only be awarded once per server session.
       if (this.claimedCollectibles.has(collectible.id)) {
-        socket.emit('action_rejected', { event: 'collect', code: 'ALREADY_COLLECTED' });
+        socket.emit('action_rejected', { event: 'collect', code: 'ALREADY_COLLECTED', itemId: collectible.id });
         return;
       }
 
       try {
         const player = await this.playerRepo.findById(playerId);
         if (!player || Math.hypot(player.x - collectible.x, player.y - collectible.y) > 190) {
-          socket.emit('action_rejected', { event: 'collect', code: 'TOO_FAR_AWAY' });
+          socket.emit('action_rejected', { event: 'collect', code: 'TOO_FAR_AWAY', itemId: collectible.id });
           return;
         }
         this.claimedCollectibles.add(collectible.id);
@@ -328,9 +345,10 @@ export class SocketController {
         if (key.startsWith(`${socket.id}:`)) this.eventWindows.delete(key);
       }
       const playerId = this.socketToPlayerMap.get(socket.id);
-      if (playerId) {
+      this.socketToPlayerMap.delete(socket.id);
+      const isCurrentSession = playerId && this.playerToSocketMap.get(playerId)?.id === socket.id;
+      if (playerId && isCurrentSession) {
         console.log(`[Socket.io] Player disconnected: ${playerId}`);
-        this.socketToPlayerMap.delete(socket.id);
         this.playerToSocketMap.delete(playerId);
 
         // Update player's last active stamp in DB

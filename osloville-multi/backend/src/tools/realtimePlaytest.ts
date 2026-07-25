@@ -11,7 +11,7 @@ import { io, Socket } from 'socket.io-client';
 
 type Player = { id: string; name: string; x: number; y: number; coins: number };
 type Collectible = { id: string; x: number; y: number };
-type TestClient = { socket: Socket; player: Player; events: Set<string> };
+type TestClient = { socket: Socket; player: Player; events: Set<string>; departures: Set<string> };
 
 const baseUrl = process.env.PLAYTEST_URL || 'http://localhost:8080';
 const runId = Date.now();
@@ -29,6 +29,7 @@ function connect(label: string): Promise<TestClient> {
   return new Promise((resolve, reject) => {
     const socket = io(baseUrl, { transports: ['websocket'], timeout: 8_000 });
     const events = new Set<string>();
+    const departures = new Set<string>();
     const timeout = setTimeout(() => {
       socket.disconnect();
       reject(new Error(`${label}: join timed out`));
@@ -43,13 +44,15 @@ function connect(label: string): Promise<TestClient> {
       });
     });
     socket.on('item_collected', () => events.add('item_collected'));
+    socket.on('world_state', () => events.add('world_state'));
     socket.on('chat_message', () => events.add('chat_message'));
     socket.on('hud_update', () => events.add('hud_update'));
     socket.on('shop_success', () => events.add('shop_success'));
     socket.on('playtest_reported', () => events.add('playtest_reported'));
+    socket.on('player_left', (playerId: string) => departures.add(playerId));
     socket.once('join_success', (data: { player: Player }) => {
       clearTimeout(timeout);
-      resolve({ socket, player: data.player, events });
+      resolve({ socket, player: data.player, events, departures });
     });
     socket.once('error', (error: { message?: string }) => {
       clearTimeout(timeout);
@@ -77,6 +80,7 @@ async function run(): Promise<void> {
   const world = await fetchWorld();
   const clients = await Promise.all(['alpha', 'bravo', 'charlie'].map(connect));
   const [alpha, bravo, charlie] = clients;
+  let reconnectedAlpha: TestClient | null = null;
 
   try {
     await Promise.all([
@@ -98,6 +102,16 @@ async function run(): Promise<void> {
       diagnostics: { runId, clients: clients.length, source: 'realtimePlaytest' },
     });
 
+    // Rejoining the same account must replace its old transport without
+    // producing a false departure for other connected players.
+    reconnectedAlpha = await connect('alpha');
+    reconnectedAlpha.socket.emit('chat', {
+      id: `qa_reconnect_${runId}`,
+      text: 'QA reconnect smoke test',
+      x: reconnectedAlpha.player.x,
+      y: reconnectedAlpha.player.y,
+    });
+
     await wait(1_200);
     const assertions = {
       collectionBroadcast: clients.every(client => client.events.has('item_collected')),
@@ -105,12 +119,16 @@ async function run(): Promise<void> {
       chatBroadcast: clients.every(client => client.events.has('chat_message')),
       cosmeticPurchase: alpha.events.has('shop_success'),
       reportQueued: alpha.events.has('playtest_reported'),
+      reconnectSessionWorks: Boolean(reconnectedAlpha?.events.has('chat_message')),
+      reconnectReceivesWorldState: Boolean(reconnectedAlpha?.events.has('world_state')),
+      reconnectDoesNotGhostLeave: !bravo.departures.has(alpha.player.id) && !charlie.departures.has(alpha.player.id),
     };
     const failures = Object.entries(assertions).filter(([, passed]) => !passed).map(([name]) => name);
     console.log(JSON.stringify({ runId, baseUrl, assertions, passed: failures.length === 0, failures }, null, 2));
     if (failures.length) process.exitCode = 1;
   } finally {
     clients.forEach(client => client.socket.disconnect());
+    reconnectedAlpha?.socket.disconnect();
   }
 }
 
