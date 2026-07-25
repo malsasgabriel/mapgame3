@@ -93,7 +93,8 @@ async function run(): Promise<void> {
     alpha.socket.emit('collect', { itemId: world[0].id });
     bravo.socket.emit('collect', { itemId: world[1].id });
     charlie.socket.emit('collect', { itemId: world[2].id });
-    await moveTo(alpha, { id: 'gruner', x: 1280, y: 580 });
+    // Keep this real-map landmark aligned with WORLD_LANDMARKS and the client.
+    await moveTo(alpha, { id: 'gruner', x: 1644, y: 1058 });
     alpha.socket.emit('chat', { id: `qa_chat_${runId}`, text: 'QA swarm: proximity and chat smoke test', x: world[0].x, y: world[0].y });
     alpha.socket.emit('shop_buy', { itemId: 'hat_cap' });
     alpha.socket.emit('playtest_report', {

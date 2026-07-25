@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { BuyShopItem } from '../domain/use-cases/BuyShopItem';
 import { MovePlayer } from '../domain/use-cases/MovePlayer';
-import { getWorldCollectibles } from '../domain/world';
+import { getWorldCollectibles, WORLD_LANDMARKS } from '../domain/world';
 import { MemoryPlayerRepository, makePlayer } from './helpers';
 
 test('movement clamps teleport attempts and derives distance server-side', async () => {
@@ -41,6 +41,15 @@ test('shop catalog is authoritative and an owned item equips without a second ch
   assert.ok(equipped);
   assert.equal(equipped.player.coins, 380);
   await assert.rejects(() => shop.execute({ playerId: 'test-player', itemId: 'forged_free_crown' }), /UNKNOWN_SHOP_ITEM/);
+});
+
+test('real Oslo landmark coordinates stay aligned with the map projection', () => {
+  assert.deepEqual(WORLD_LANDMARKS, [
+    { id: 'opera', x: 1594, y: 1406 }, { id: 'palace', x: 1291, y: 1193 },
+    { id: 'vigeland', x: 960, y: 968 }, { id: 'akershus', x: 1404, y: 1418 },
+    { id: 'akerbrygge', x: 1224, y: 1395 }, { id: 'karljohan', x: 1428, y: 1283 },
+    { id: 'holmenkollen', x: 576, y: 158 }, { id: 'gruner', x: 1644, y: 1058 },
+  ]);
 });
 
 test('daily world generation is deterministic and bounded', () => {

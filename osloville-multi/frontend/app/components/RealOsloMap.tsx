@@ -22,6 +22,7 @@ export function RealOsloMap({ players, currentPlayerId, landmarks, collectibles,
   const mapRef = useRef<import('leaflet').Map | null>(null);
   const leafletRef = useRef<typeof import('leaflet') | null>(null);
   const markersRef = useRef(new Map<string, import('leaflet').Marker>());
+  const markerSignaturesRef = useRef(new Map<string, string>());
   const pathRef = useRef<import('leaflet').Polyline | null>(null);
   const callbacks = useRef({ onNavigate, onSelectPlayer, onLandmarkClick });
   const lastZoomRequest = useRef(0);
@@ -43,7 +44,7 @@ export function RealOsloMap({ players, currentPlayerId, landmarks, collectibles,
       map.on('click', event => { const point = clampWorldPoint(latLngToXy(event.latlng.lat, event.latlng.lng)); callbacks.current.onNavigate(point.x, point.y); });
       mapRef.current = map; setReady(true);
     });
-    return () => { cancelled = true; markersRef.current.clear(); map?.remove(); mapRef.current = null; leafletRef.current = null; };
+    return () => { cancelled = true; markersRef.current.clear(); markerSignaturesRef.current.clear(); map?.remove(); mapRef.current = null; leafletRef.current = null; };
   }, []);
   useEffect(() => { mapRef.current?.getContainer().classList.toggle('oslo-real-map--night', nightMode); }, [nightMode]);
   useEffect(() => {
@@ -65,13 +66,20 @@ export function RealOsloMap({ players, currentPlayerId, landmarks, collectibles,
     const active = new Set<string>();
     const add = (key: string, lat: number, lng: number, html: string, click: () => void) => {
       active.add(key); let marker = markersRef.current.get(key);
-      if (!marker) { marker = L.marker([lat, lng], { pane: 'game', keyboard: false, icon: L.divIcon({ className: 'oslo-marker-shell', html, iconSize: [1, 1] }) }).addTo(map); markersRef.current.set(key, marker); }
+      if (!marker) {
+        marker = L.marker([lat, lng], { pane: 'game', keyboard: false, icon: L.divIcon({ className: 'oslo-marker-shell', html, iconSize: [1, 1] }) }).addTo(map);
+        markersRef.current.set(key, marker);
+        markerSignaturesRef.current.set(key, html);
+      } else if (markerSignaturesRef.current.get(key) !== html) {
+        marker.setIcon(L.divIcon({ className: 'oslo-marker-shell', html, iconSize: [1, 1] }));
+        markerSignaturesRef.current.set(key, html);
+      }
       marker.setLatLng([lat, lng]); marker.off('click').on('click', click);
     };
     landmarks.forEach(item => add(`landmark:${item.id}`, item.lat, item.lng, `<button class="oslo-landmark" aria-label="${escape(item.name)}"><span>${escape(item.emoji)}</span><small>${escape(item.name)}</small></button>`, () => callbacks.current.onLandmarkClick(item.id)));
     collectibles.filter(item => !item.collected).forEach(item => { const point = xyToLatLng(item.x, item.y); add(`collectible:${item.id}`, point.lat, point.lng, `<button class="oslo-collectible" aria-label="Collect">${escape(item.icon)}</button>`, () => callbacks.current.onNavigate(item.x, item.y)); });
     players.forEach(item => { const point = xyToLatLng(item.x, item.y); const me = item.id === currentPlayerId; add(`player:${item.id}`, point.lat, point.lng, `<button class="oslo-pin ${me ? 'oslo-pin--me' : ''}"><b>${escape(item.name.split(' ')[0])}</b><span>${escape(item.status || '')}</span></button>`, () => callbacks.current.onSelectPlayer(item.id)); });
-    for (const [key, marker] of markersRef.current) if (!active.has(key)) { marker.remove(); markersRef.current.delete(key); }
+    for (const [key, marker] of markersRef.current) if (!active.has(key)) { marker.remove(); markersRef.current.delete(key); markerSignaturesRef.current.delete(key); }
     const points = path.map(point => { const latLng = xyToLatLng(point.x, point.y); return [latLng.lat, latLng.lng] as [number, number]; });
     if (points.length > 1) { if (!pathRef.current) pathRef.current = L.polyline(points, { pane: 'game', color: '#264653', weight: 4, dashArray: '10 8' }).addTo(map); else pathRef.current.setLatLngs(points); } else { pathRef.current?.remove(); pathRef.current = null; }
   }, [ready, players, currentPlayerId, landmarks, collectibles, path]);
