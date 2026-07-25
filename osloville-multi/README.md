@@ -1,6 +1,6 @@
 # OSLOVILLE — Containerized Next.js + PostgreSQL + Socket.io (Clean Architecture)
 
-**For real-time professional tester sessions:** read [PLAYTEST.md](PLAYTEST.md). It includes the live bug-report queue and the three-client automated QA gate. The completed 10-round senior review is documented in [SENIOR_GD_REVIEW.md](SENIOR_GD_REVIEW.md).
+**For real-time professional tester sessions:** read [PLAYTEST.md](PLAYTEST.md). It includes the live bug-report queue and the three-client automated QA gate. The completed 10-round senior review is documented in [SENIOR_GD_REVIEW.md](SENIOR_GD_REVIEW.md). EN/RU localization rules and the QA checklist live in [LOCALIZATION.md](LOCALIZATION.md).
 
 OsloVille is a FarmVille-style cozy social map game centered on **real Oslo** with real-time multiplayer coordination, persistent player statistics, dynamic weather, custom cosmetics, and local/Google authentication.
 

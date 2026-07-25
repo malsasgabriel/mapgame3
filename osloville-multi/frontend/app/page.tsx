@@ -3,12 +3,12 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { socket, getBackendUrl } from '@/lib/socket';
 import { PerformanceMonitor } from '@/lib/performance';
 import { audio } from '@/lib/audioEngine';
-import { getDistrictForPosition, DISTRICTS } from '@/lib/districts';
+import { getDistrictForPosition } from '@/lib/districts';
 import { getDailyShop, coinPopAnimation } from '@/lib/economy';
 import { fetchOsloWeather, OsloWeather } from '@/lib/weather';
 import { findPath } from '@/lib/pathfinding';
 import { xpToLevel, BADGES, SEASON_1 } from '@/lib/progression';
-import { t, Lang, detectLang } from '@/lib/i18n';
+import { t, Lang, detectLang, localeFor, weatherLabel } from '@/lib/i18n';
 import { track, getFunnel } from '@/lib/analytics';
 import { screenShake, popScale, slowMo } from '@/lib/juice';
 import { getNpcResponse, getNearbyNpc, NPCS } from '@/lib/aiNpcs';
@@ -27,10 +27,10 @@ const LANDMARKS = [
   { id: 'gruner', name: 'Grünerløkka', emoji: '☕', x: 1280, y: 580, lat: 59.923, lng: 10.757, desc: 'Hip coffee district' },
 ];
 const MOCK_NAMES = [
-  { name: "Ingrid Ø.", status: "kaffe at Tim Wendelboe? ☕", color: "#FF8FA3" },
-  { name: "Magnus L.", status: "coding near Aker Brygge 💻", color: "#7DD8C6" },
-  { name: "Sofia K.", status: "Vigeland walk 🌿", color: "#A78BFA" },
-  { name: "Jonas P.", status: "Ski waxing ⛷️", color: "#FBBF24" },
+  { name: 'Ingrid Ø.', statusKey: 'bot.ingrid', color: '#FF8FA3' },
+  { name: 'Magnus L.', statusKey: 'bot.magnus', color: '#7DD8C6' },
+  { name: 'Sofia K.', statusKey: 'bot.sofia', color: '#A78BFA' },
+  { name: 'Jonas P.', statusKey: 'bot.jonas', color: '#FBBF24' },
 ];
 const SHOP_ITEMS = [
   { id: 'hat_beanie', name: 'Wool Beanie', emoji: '🧶', price: 80, type: 'hat', rarity: 'common' },
@@ -95,7 +95,7 @@ type Collectible = {
 type Quest = {
   id: string;
   icon: string;
-  title: string;
+  titleKey: string;
   progress: number;
   total: number;
   done: boolean;
@@ -108,13 +108,13 @@ type LoginUser = Partial<Player> & { googleToken?: string };
 const avatarOf = (player: Pick<Player, 'avatarUrl' | 'avatar_url' | 'avatar'>) =>
   player.avatarUrl || player.avatar_url || player.avatar || '/assets/characters.png';
 
-const createOfflineBots = (origin: Player | null): Player[] => {
+const createOfflineBots = (origin: Player | null, lang: Lang): Player[] => {
   const x = origin?.x ?? 1100;
   const y = origin?.y ?? 850;
   return MOCK_NAMES.map((bot, index) => ({
     id: `offline_bot_${index}`,
     name: bot.name,
-    status: bot.status,
+    status: t(bot.statusKey, lang),
     avatarUrl: `https://i.pravatar.cc/100?img=${11 + index}`,
     x: x + (index % 2 === 0 ? -1 : 1) * (180 + index * 36),
     y: y + (index < 2 ? -1 : 1) * (130 + index * 28),
@@ -164,14 +164,22 @@ export default function Page() {
   const [discovered, setDiscovered] = useState<Set<string>>(new Set(['palace', 'karljohan']));
   const [inventory, setInventory] = useState<Record<string, number>>({ hat_beanie: 1, acc_coffee: 1 });
   const [quests, setQuests] = useState<Quest[]>([
-    { id: 'q1', icon: '👋', title: 'Say hei to 3 locals', progress: 0, total: 3, done: false, reward: 120 },
-    { id: 'q2', icon: '☕', title: 'Fika at Grünerløkka', progress: 0, total: 1, done: false, reward: 80 },
-    { id: 'q3', icon: '🪙', title: 'Collect 5 boller', progress: 0, total: 5, done: false, reward: 150 },
-    { id: 'q4', icon: '🌌', title: 'See aurora night', progress: 0, total: 1, done: false, reward: 200 },
+    { id: 'q1', icon: '👋', titleKey: 'quest.q1', progress: 0, total: 3, done: false, reward: 120 },
+    { id: 'q2', icon: '☕', titleKey: 'quest.q2', progress: 0, total: 1, done: false, reward: 80 },
+    { id: 'q3', icon: '🪙', titleKey: 'quest.q3', progress: 0, total: 5, done: false, reward: 150 },
+    { id: 'q4', icon: '🌌', titleKey: 'quest.q4', progress: 0, total: 1, done: false, reward: 200 },
   ]);
   const questsRef = useRef<Quest[]>([]);
   const [socketStatus, setSocketStatus] = useState<'offline' | 'connecting' | 'connected'>('offline');
   const [googleClientId, setGoogleClientId] = useState('');
+
+  const toggleLanguage = useCallback(() => {
+    setLang(previous => {
+      const next: Lang = previous === 'en' ? 'ru' : 'en';
+      localStorage.setItem('oslo_lang', next);
+      return next;
+    });
+  }, []);
 
   const parseJwt = (token: string): Record<string, string> | null => {
     try {
@@ -207,9 +215,19 @@ export default function Page() {
   const currentUserRef = useRef<Player | null>(null);
   const collectionCooldownRef = useRef(new Map<string, number>());
   const claimedCollectiblesRef = useRef(new Set<string>());
+  const langRef = useRef<Lang>('en');
 
   // Lang detect
   useEffect(() => { setLang(detectLang()); }, []);
+  useEffect(() => {
+    langRef.current = lang;
+    document.documentElement.lang = lang;
+    if (!currentUserRef.current) setStatusInput(t('status.default', lang));
+    setPlayers(previous => previous.map(player => {
+      const match = player.id.startsWith('offline_bot_') ? MOCK_NAMES[Number(player.id.replace('offline_bot_', ''))] : undefined;
+      return match ? { ...player, status: t(match.statusKey, lang) } : player;
+    }));
+  }, [lang]);
   useEffect(() => { questsRef.current = quests; }, [quests]);
   useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
 
@@ -232,7 +250,6 @@ export default function Page() {
 
   // Loading
   useEffect(() => {
-    const tips = ["Waking up Vigeland...", "Brewing Grüner coffee...", "Checking aurora forecast...", "Loading ski wax..."];
     const iv = setInterval(() => {
       setLoadingProgress(p => {
         const np = Math.min(100, p + Math.random() * 18 + 6);
@@ -274,7 +291,7 @@ export default function Page() {
       setSocketStatus('offline');
       setPlayers(previous => previous.some(player => player.id.startsWith('offline_bot_'))
         ? previous
-        : [...previous, ...createOfflineBots(currentUserRef.current)]);
+        : [...previous, ...createOfflineBots(currentUserRef.current, langRef.current)]);
     };
 
     const onJoinSuccess = (data: {
@@ -352,7 +369,7 @@ export default function Page() {
         track('landmark_discover', id);
         if (id === 'gruner') advanceQuest('q2');
       });
-      setNotice(`Discovered ${landmarkIds.length > 1 ? `${landmarkIds.length} landmarks` : 'a new landmark'}! +${landmarkIds.length * 30} coins`);
+      setNotice(t(landmarkIds.length > 1 ? 'notice.discovery.many' : 'notice.discovery.one', langRef.current, { count: landmarkIds.length, coins: landmarkIds.length * 30 }));
     };
 
     const onShopSuccess = (data: { coins: number; inventory: any; player: any }) => {
@@ -379,17 +396,17 @@ export default function Page() {
       }
     };
     const onPlaytestReported = () => {
-      setNotice('Thanks — your report is now in the live QA queue.');
+      setNotice(t('feedback.sent', langRef.current));
       setShowFeedback(false);
       setFeedbackTitle('');
       setFeedbackReproduction('');
     };
     const onActionRejected = (data: { event?: string; code?: string; itemId?: string }) => {
-      if (data.event === 'playtest_report') setNotice('Report could not be sent. Please try again.');
+      if (data.event === 'playtest_report') setNotice(t('feedback.failed', langRef.current));
       if (data.event === 'collect' && data.itemId) {
         collectionCooldownRef.current.set(data.itemId, Date.now() + 1_500);
         setCollectibles(previous => previous.map(item => item.id === data.itemId ? { ...item, collected: false } : item));
-        setNotice(data.code === 'TOO_FAR_AWAY' ? 'Walk closer to the pickup before collecting it.' : 'That pickup is no longer available.');
+        setNotice(t(data.code === 'TOO_FAR_AWAY' ? 'notice.pickupTooFar' : 'notice.pickupGone', langRef.current));
       }
     };
 
@@ -586,7 +603,7 @@ export default function Page() {
       avatarUrl: user.avatarUrl || user.avatar_url || user.avatar || '',
       x: user.x ?? 1000,
       y: user.y ?? 900,
-      status: user.status || 'Hei Oslo! 👋',
+      status: user.status || t('status.default', lang),
       hat: user.hat || customHat,
       acc: user.acc || customAcc,
       color: user.color || customColor,
@@ -648,7 +665,7 @@ export default function Page() {
     if (completionReward) {
       setCoinCount(coins => coins + completionReward);
       track('quest_complete', questId);
-      setNotice(`Quest complete! +${completionReward} coins`);
+      setNotice(t('quest.complete', langRef.current, { coins: completionReward }));
     }
   }, []);
 
@@ -751,7 +768,7 @@ export default function Page() {
 
     const npc = getNearbyNpc(currentUser.x, currentUser.y);
     if (npc && text.length > 2) {
-      const reply = getNpcResponse(npc.id, text, currentUser.name.split(' ')[0]);
+      const reply = getNpcResponse(npc.id, text, currentUser.name.split(' ')[0], lang);
       setChat(prev => [
         ...prev.slice(-29),
         { id: 'local_' + Date.now(), name: currentUser.name.split(' ')[0], text, avatar_url: currentUser.avatar_url || currentUser.avatar },
@@ -781,11 +798,11 @@ export default function Page() {
 
   const submitFeedback = () => {
     if (!feedbackTitle.trim()) {
-      setNotice('Add a short title so the QA team can reproduce the issue.');
+      setNotice(t('feedback.titleRequired', lang));
       return;
     }
     if (!socket.connected || !currentUser) {
-      setNotice('Connect to the live playtest server before sending feedback.');
+      setNotice(t('feedback.offline', lang));
       return;
     }
     socket.emit('playtest_report', {
@@ -803,7 +820,7 @@ export default function Page() {
         userAgent: navigator.userAgent.slice(0, 180),
       },
     });
-    setNotice('Sending report to the live QA queue…');
+    setNotice(t('feedback.sending', lang));
   };
 
   const dailyShop = getDailyShop(SHOP_ITEMS);
@@ -812,6 +829,9 @@ export default function Page() {
     ? PerformanceMonitor.cullPlayers(worldPlayers, mapOffset, mapScale, viewportSize)
     : worldPlayers;
   const district = currentUser ? getDistrictForPosition(currentUser.x, currentUser.y) : null;
+  const districtLabel = district ? t(`district.${district.id}`, lang) : '';
+  const currentWeatherLabel = weatherLabel(weather?.desc, lang);
+  const numberLocale = localeFor(lang);
   const funnel = getFunnel();
   const { level: lvlCalc, progress: lvlProg, nextReq } = xpToLevel(xp);
 
@@ -825,7 +845,7 @@ export default function Page() {
             <div style={{ position:'absolute', width:18, height:18, borderRadius:'50%', background:'#E76F51', left:'55%', top:'55%', border:'3px solid white', animation:'float 1.6s 0.4s infinite' }}></div>
           </div>
           <div style={{ width:'100%', height:8, background:'#eef3f4', borderRadius:999, overflow:'hidden', marginBottom:10 }}><div style={{ width:loadingProgress+'%', height:'100%', background:'linear-gradient(90deg,#2A9D8F,#E9C46A,#E76F51)', transition:'width .4s' }}></div></div>
-          <div style={{ fontSize:12, color:'#6d818c' }}>Cycle 20/20 → AAA • {weather ? `${weather.temp}°C ${weather.desc}` : 'Loading Oslo...'}</div>
+          <div style={{ fontSize:12, color:'#6d818c' }}>{t('loading.status', lang)} • {weather ? `${weather.temp}°C ${currentWeatherLabel}` : t('loading.oslo', lang)}</div>
           <style>{`@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}`}</style>
         </div>
       </div>
@@ -838,21 +858,21 @@ export default function Page() {
         <div style={{ position:'absolute', inset:0, backgroundImage:"url('/assets/hero.jpg')", backgroundSize:'cover' }}></div>
         <div style={{ position:'absolute', inset:0, background:'radial-gradient(70% 80% at 30% 20%, rgba(255,255,255,0.5), transparent), linear-gradient(to bottom, rgba(255,255,255,0.15), rgba(254,250,224,0.88))' }}></div>
         <div className="login-card" style={{ position:'absolute', left:'50%', top:'50%', transform:'translate(-50%,-50%)', width:440, background:'rgba(255,255,255,0.86)', backdropFilter:'blur(24px)', borderRadius:32, padding:'32px 28px', boxShadow:'0 20px 60px rgba(38,70,83,0.18)', zIndex:3 }}>
-          <div style={{ display:'flex', gap:10, alignItems:'center', marginBottom:8 }}><div style={{ width:44, height:44, background:'white', borderRadius:14, display:'grid', placeItems:'center' }}>📍</div><h1 style={{ margin:0, fontWeight:800, fontSize:24 }}>OSLOVILLE</h1><span style={{ background:'#E76F51', color:'white', fontSize:10, fontWeight:800, padding:'2px 6px', borderRadius:6 }}>AAA • {socketStatus} • {fps}FPS</span></div>
-          <h2 style={{ fontSize:40, lineHeight:0.9, letterSpacing:-0.03, margin:'12px 0 8px', fontFamily:"Georgia, 'Times New Roman', serif" }}>Be on the map.<br /><span style={{ background:'linear-gradient(90deg,#2A9D8F,#E76F51)', WebkitBackgroundClip:'text', backgroundClip:'text', color:'transparent' }}>Literally.</span></h2>
-          <p style={{ color:'#5a6d78', fontSize:15, lineHeight:1.5, margin:'0 0 22px' }}>20 cycles to AAA: realtime multiplayer, pathfinding, real weather {weather?.temp}°C, AI baristas, photo mode. {district ? `You spawned near ${district.name}` : ''}</p>
-          <button onClick={handleGoogleLogin} style={{ width:'100%', height:48, background:'white', border:'1px solid #dadce0', borderRadius:14, display:'flex', alignItems:'center', justifyContent:'center', gap:10, fontWeight:600 }}>🔐 Continue with Google</button>
-          <div style={{ display:'flex', alignItems:'center', gap:12, margin:'16px 0', color:'#8a9aa4', fontSize:12, textTransform:'uppercase', letterSpacing:'0.1em' }}><div style={{ flex:1, height:1, background:'rgba(0,0,0,0.08)' }}></div><span>or</span><div style={{ flex:1, height:1, background:'rgba(0,0,0,0.08)' }}></div></div>
-          <button onClick={handleDemoLogin} style={{ width:'100%', height:52, borderRadius:16, border:'none', background:'linear-gradient(135deg, #264653, #2A9D8F)', color:'white', fontWeight:700 }}>✨ Play AAA — Instant Multi • {lang.toUpperCase()} • {socketStatus}</button>
+          <div style={{ display:'flex', gap:10, alignItems:'center', marginBottom:8 }}><div style={{ width:44, height:44, background:'white', borderRadius:14, display:'grid', placeItems:'center' }}>📍</div><h1 style={{ margin:0, fontWeight:800, fontSize:24 }}>OSLOVILLE</h1><span style={{ background:'#E76F51', color:'white', fontSize:10, fontWeight:800, padding:'2px 6px', borderRadius:6 }}>AAA • {socketStatus} • {fps}FPS</span><button onClick={toggleLanguage} aria-label={t('controls.language', lang)} style={{ marginLeft:'auto', height:30, minWidth:42, borderRadius:9, border:'1px solid #dbe5e7', background:'white', fontWeight:700 }}>{lang === 'en' ? 'RU' : 'EN'}</button></div>
+          <h2 style={{ fontSize:40, lineHeight:0.9, letterSpacing:-0.03, margin:'12px 0 8px', fontFamily:"Georgia, 'Times New Roman', serif" }}>{t('login.tagline.first', lang)}<br /><span style={{ background:'linear-gradient(90deg,#2A9D8F,#E76F51)', WebkitBackgroundClip:'text', backgroundClip:'text', color:'transparent' }}>{t('login.tagline.second', lang)}</span></h2>
+          <p style={{ color:'#5a6d78', fontSize:15, lineHeight:1.5, margin:'0 0 22px' }}>{t('login.description', lang)} {weather ? `${weather.temp}°C · ${currentWeatherLabel}` : ''}</p>
+          <button onClick={handleGoogleLogin} style={{ width:'100%', height:48, background:'white', border:'1px solid #dadce0', borderRadius:14, display:'flex', alignItems:'center', justifyContent:'center', gap:10, fontWeight:600 }}>🔐 {t('login.google', lang)}</button>
+          <div style={{ display:'flex', alignItems:'center', gap:12, margin:'16px 0', color:'#8a9aa4', fontSize:12, textTransform:'uppercase', letterSpacing:'0.1em' }}><div style={{ flex:1, height:1, background:'rgba(0,0,0,0.08)' }}></div><span>{t('login.or', lang)}</span><div style={{ flex:1, height:1, background:'rgba(0,0,0,0.08)' }}></div></div>
+          <button onClick={handleDemoLogin} style={{ width:'100%', height:52, borderRadius:16, border:'none', background:'linear-gradient(135deg, #264653, #2A9D8F)', color:'white', fontWeight:700 }}>✨ {t('login.demo', lang)}</button>
           <div style={{ marginTop:18, textAlign:'center', fontSize:11, color:'#8aa0ad' }}>
-            <p>Cycles: Performance→Parallax→Audio→Animation→Districts→Economy→Narrative→Social→Weather→Mobile→Photo→Progression→Avatar→Pathfinding→Backend→AI→Juice→A11y→Analytics→Launch</p>
-            <p>Day shop seed {dailyShop.seed} • Funnel: {funnel.moves}m {funnel.collects}c {funnel.chats}💬</p>
+            <p>{t('login.cycles', lang)}</p>
+            <p>{t('login.seed', lang, { seed: dailyShop.seed, moves: funnel.moves, collects: funnel.collects, chats: funnel.chats })}</p>
           </div>
         </div>
         {showChooser && (
           <div onClick={()=>setShowChooser(false)} style={{ position:'fixed', inset:0, background:'rgba(20,32,38,0.48)', backdropFilter:'blur(14px)', display:'grid', placeItems:'center', zIndex:50 }}>
             <div onClick={e=>e.stopPropagation()} style={{ background:'white', borderRadius:24, width:380, overflow:'hidden' }}>
-              <div style={{ padding:18, borderBottom:'1px solid #eef2f3', textAlign:'center' }}>Choose demo</div>
+              <div style={{ padding:18, borderBottom:'1px solid #eef2f3', textAlign:'center' }}>{t('login.chooseDemo', lang)}</div>
               <div style={{ padding:8 }}>
                 {[{ name:'Alex Rivera', pic:'https://i.pravatar.cc/100?img=13' },{ name:'Sanne Nilsen', pic:'https://i.pravatar.cc/100?img=26' }].map(acc=>(
                   <div key={acc.name} onClick={()=>{ setShowChooser(false); loginAs({ name:acc.name, avatar:acc.pic, id:'me_'+Date.now() }); setShowCustomizer(true); }} style={{ display:'flex', gap:12, padding:12, cursor:'pointer' }}><img src={acc.pic} style={{ width:36, height:36, borderRadius:'50%' }} alt="" /><b>{acc.name}</b></div>
@@ -875,11 +895,11 @@ export default function Page() {
             <div style={{ width:60, height:6, background:'#e1e8e6', borderRadius:999 }}><div style={{ width:(lvlProg/nextReq)*100+'%', height:'100%', background:'linear-gradient(90deg,#E9C46A,#E76F51)', borderRadius:999 }}></div></div>
             <span style={{ fontSize:11, color:'#6b7d87', fontWeight:600 }}>{lvlProg}/{nextReq} XP • {lang.toUpperCase()}</span>
           </div>
-          <div style={{ display:'flex', gap:6, background:'linear-gradient(180deg,#fff7d6,#ffeeb1)', border:'1px solid #f5d77a', borderRadius:999, padding:'6px 12px', fontWeight:700, fontSize:13 }}>🪙 {coinCount.toLocaleString()} • {walkKm.toFixed(1)}km • {district?.name}</div>
+          <div style={{ display:'flex', gap:6, background:'linear-gradient(180deg,#fff7d6,#ffeeb1)', border:'1px solid #f5d77a', borderRadius:999, padding:'6px 12px', fontWeight:700, fontSize:13 }}>🪙 {coinCount.toLocaleString(numberLocale)} • {t('hud.walked', lang, { distance: walkKm.toFixed(1) })} • {districtLabel}</div>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
           <div style={{ display:'flex', alignItems:'center', gap:8, background:'white', border:'1px solid #e3eaec', borderRadius:999, padding:'6px 6px 6px 14px', width:380 }}>
-            <span>💬</span><input value={statusInput} onChange={e=>{ setStatusInput(e.target.value); if(currentUser) setCurrentUser({...currentUser,status:e.target.value}); }} maxLength={48} placeholder={t('be_on_map',lang)} style={{ flex:1, border:'none', outline:'none' }} />
+            <span>💬</span><input value={statusInput} onChange={e=>{ setStatusInput(e.target.value); if(currentUser) setCurrentUser({...currentUser,status:e.target.value}); }} maxLength={48} placeholder={t('hud.statusPlaceholder', lang)} style={{ flex:1, border:'none', outline:'none' }} />
             <button onClick={() => {
               if (!currentUser) return;
               setCurrentUser({ ...currentUser, status: statusInput });
@@ -893,26 +913,26 @@ export default function Page() {
                   y: currentUser.y,
                 });
               }
-            }} style={{ background:'#264653', color:'white', border:'none', height:30, padding:'0 14px', borderRadius:999, fontWeight:700, fontSize:12 }}>Update</button>
+            }} style={{ background:'#264653', color:'white', border:'none', height:30, padding:'0 14px', borderRadius:999, fontWeight:700, fontSize:12 }}>{t('hud.update', lang)}</button>
           </div>
         </div>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-          <button onClick={()=>setShowShop(true)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>🛍️</button>
-          <button onClick={()=>setShowBag(true)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>🎒</button>
-          <button onClick={()=>setShowPhoto(true)} aria-label="Photo mode" title="Photo mode" style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>📸</button>
-          <button onClick={()=>setShowFeedback(true)} aria-label="Send playtest feedback" title="Send playtest feedback" style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'#fff8df' }}>🐞</button>
-          <button onClick={()=>setUseRealMap(v=>!v)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>{useRealMap?'🎨':'🗺️'}</button>
-          <button onClick={() => setNightMode(value => { const next = !value; if (next) advanceQuest('q4'); return next; })} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>{nightMode?'☀️':'🌙'}</button>
-          <button onClick={()=>setSnowEnabled(v=>!v)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>❄️</button>
-          <button onClick={()=>{ const nl=lang==='en'?'no':'en'; setLang(nl); localStorage.setItem('oslo_lang',nl); }} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>{lang==='en'?'🇳🇴':'🇬🇧'}</button>
-          <button onClick={()=>setShowSettings(true)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>⚙️</button>
+          <button onClick={()=>setShowShop(true)} aria-label={t('controls.shop', lang)} title={t('controls.shop', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>🛍️</button>
+          <button onClick={()=>setShowBag(true)} aria-label={t('controls.bag', lang)} title={t('controls.bag', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>🎒</button>
+          <button onClick={()=>setShowPhoto(true)} aria-label={t('controls.photo', lang)} title={t('controls.photo', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>📸</button>
+          <button onClick={()=>setShowFeedback(true)} aria-label={t('controls.feedback', lang)} title={t('controls.feedback', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'#fff8df' }}>🐞</button>
+          <button onClick={()=>setUseRealMap(v=>!v)} aria-label={t('controls.map', lang)} title={t('controls.map', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>{useRealMap?'🎨':'🗺️'}</button>
+          <button onClick={() => setNightMode(value => { const next = !value; if (next) advanceQuest('q4'); return next; })} aria-label={t('controls.night', lang)} title={t('controls.night', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>{nightMode?'☀️':'🌙'}</button>
+          <button onClick={()=>setSnowEnabled(v=>!v)} aria-label={t('controls.snow', lang)} title={t('controls.snow', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>❄️</button>
+          <button onClick={toggleLanguage} aria-label={t('controls.language', lang)} title={t('controls.language', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>{lang === 'en' ? '🇷🇺' : '🇬🇧'}</button>
+          <button onClick={()=>setShowSettings(true)} aria-label={t('controls.settings', lang)} title={t('controls.settings', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>⚙️</button>
           <div style={{ display:'flex', alignItems:'center', gap:8, background:'white', border:'1px solid #e2e9eb', borderRadius:999, padding:'4px 12px 4px 4px' }}><img src={currentUser ? avatarOf(currentUser) : ''} style={{ width:32, height:32, borderRadius:'50%' }} alt="" /><span style={{ fontWeight:600, fontSize:13 }}>{currentUser?.name.split(' ')[0]}</span></div>
         </div>
       </header>
 
       <div style={{ display:'flex', flex:1, overflow:'hidden' }}>
         <aside style={{ width:300, background:'rgba(255,255,255,0.9)', backdropFilter:'blur(16px)', borderRight:'1px solid rgba(0,0,0,0.06)', overflowY:'auto', padding:14 }}>
-          <h3 style={{ fontSize:11, letterSpacing:'.12em', color:'#8aa0ad', margin:'0 0 12px' }}>{t('live_in_oslo',lang)} <b>{players.length+1}</b> • {weather?.temp}°C {weather?.desc} • {socketStatus}</h3>
+          <h3 style={{ fontSize:11, letterSpacing:'.12em', color:'#8aa0ad', margin:'0 0 12px' }}>{t('hud.live', lang)} · {t('hud.online', lang, { count: players.length + 1 })} · {weather?.temp}°C {currentWeatherLabel} · {socketStatus}</h3>
           <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
             {[currentUser, ...players].filter(Boolean).slice(0,20).map((p:any)=>(
               <div key={p.id} onClick={()=>setShowPlayerModal(p)} style={{ display:'flex', gap:10, padding:'8px 10px', borderRadius:14, cursor:'pointer', background:p.id===currentUser?.id?'#f0f7f5':'transparent' }}>
@@ -922,25 +942,25 @@ export default function Page() {
               </div>
             ))}
           </div>
-          <h3 style={{ fontSize:11, letterSpacing:'.12em', color:'#8aa0ad', margin:'16px 0 12px' }}>{t('landmarks',lang)} • {discovered.size}/{LANDMARKS.length} • Badges {badges.length}</h3>
+          <h3 style={{ fontSize:11, letterSpacing:'.12em', color:'#8aa0ad', margin:'16px 0 12px' }}>{t('landmarks.title', lang)} · {discovered.size}/{LANDMARKS.length} · {t('landmarks.badges', lang, { count: badges.length })}</h3>
           <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
             {LANDMARKS.map(l=>(
               <div key={l.id} onClick={()=>{ const rect=viewportRef.current?.getBoundingClientRect(); if(rect){ setMapOffset({ x:rect.width/2-l.x*mapScale, y:rect.height/2-l.y*mapScale }); } moveTo(l.x,l.y,true); }} style={{ display:'flex', gap:10, padding:8, borderRadius:12, background: discovered.has(l.id)? 'linear-gradient(180deg,#f2fcf7,#e8f7f0)':'linear-gradient(180deg, white, #f8fdfc)', border:`1px solid ${discovered.has(l.id)?'#b5e6d3':'#e1ecea'}`, cursor:'pointer' }}>
-                <div style={{ width:36, height:36, borderRadius:10, background:'#e6f4f2', display:'grid', placeItems:'center' }}>{l.emoji}</div><div><b style={{ fontSize:12 }}>{l.name} {discovered.has(l.id)?'✓':''}</b><br /><small style={{ fontSize:11, color:'#7b8f99' }}>{(DISTRICTS as any)[l.id]?.vibe || l.desc}</small></div>
+                <div style={{ width:36, height:36, borderRadius:10, background:'#e6f4f2', display:'grid', placeItems:'center' }}>{l.emoji}</div><div><b style={{ fontSize:12 }}>{t(`landmark.${l.id}.name`, lang)} {discovered.has(l.id)?'✓':''}</b><br /><small style={{ fontSize:11, color:'#7b8f99' }}>{t(`landmark.${l.id}.desc`, lang)}</small></div>
               </div>
             ))}
           </div>
-          {nearbyNpc && <div style={{ marginTop:12, background:'linear-gradient(135deg,#264653,#2a9d8f)', color:'white', borderRadius:16, padding:12 }}><b>{nearbyNpc.name} {nearbyNpc.emoji}</b><br /><small>{nearbyNpc.personality} • Nearby! Say hei</small></div>}
-          <div style={{ marginTop:12, background:'#fffbe0', border:'1px solid #f5d77a', borderRadius:12, padding:10, fontSize:11 }}><b>Season 1: {SEASON_1.name}</b><br />Tier {lvlCalc}/30 • Next: {SEASON_1.tiers[lvlCalc-1]?.reward.emoji||'🪙'} {SEASON_1.tiers[lvlCalc-1]?.reward.name||''}</div>
+          {nearbyNpc && <div style={{ marginTop:12, background:'linear-gradient(135deg,#264653,#2a9d8f)', color:'white', borderRadius:16, padding:12 }}><b>{nearbyNpc.name} {nearbyNpc.emoji}</b><br /><small>{t(`npc.${nearbyNpc.id}.personality`, lang)} · {t('npc.nearby', lang)}</small></div>}
+          <div style={{ marginTop:12, background:'#fffbe0', border:'1px solid #f5d77a', borderRadius:12, padding:10, fontSize:11 }}><b>{t('season.title', lang, { name: SEASON_1.name })}</b><br />{t('season.tier', lang, { level: lvlCalc })} {SEASON_1.tiers[lvlCalc-1]?.reward.emoji||'🪙'} {SEASON_1.tiers[lvlCalc-1]?.reward.name||''}</div>
         </aside>
 
-        <main ref={viewportRef} className="map-viewport" tabIndex={0} role="application" aria-label="Oslo game map. Use arrows or W A S D to move." onKeyDown={onMapKeyDown} onMouseDown={onMouseDown} style={{ flex:1, position:'relative', background:'linear-gradient(180deg,#d8eef5,#fefae0)', overflow:'hidden', cursor:'grab' }}>
+        <main ref={viewportRef} className="map-viewport" tabIndex={0} role="application" aria-label={t('map.aria', lang)} onKeyDown={onMapKeyDown} onMouseDown={onMouseDown} style={{ flex:1, position:'relative', background:'linear-gradient(180deg,#d8eef5,#fefae0)', overflow:'hidden', cursor:'grab' }}>
           <div style={{ position:'absolute', left:14, top:14, zIndex:5, display:'flex', flexDirection:'column', gap:6 }}>
-            <button onClick={()=>setMapScale(s=>Math.min(1.8,s+0.15))} style={{ width:40, height:40, borderRadius:12, background:'rgba(255,255,255,0.92)' }}>+</button>
-            <button onClick={()=>setMapScale(s=>Math.max(0.45,s-0.15))} style={{ width:40, height:40, borderRadius:12, background:'rgba(255,255,255,0.92)' }}>−</button>
-            <button onClick={()=>{ if(currentUser){ const rect=viewportRef.current?.getBoundingClientRect(); if(rect) setMapOffset({ x:rect.width/2-currentUser.x*mapScale, y:rect.height/2-currentUser.y*mapScale }); } }} style={{ width:40, height:40, borderRadius:12, background:'rgba(255,255,255,0.92)' }}>◎</button>
+            <button onClick={()=>setMapScale(s=>Math.min(1.8,s+0.15))} aria-label={t('map.zoomIn', lang)} title={t('map.zoomIn', lang)} style={{ width:40, height:40, borderRadius:12, background:'rgba(255,255,255,0.92)' }}>+</button>
+            <button onClick={()=>setMapScale(s=>Math.max(0.45,s-0.15))} aria-label={t('map.zoomOut', lang)} title={t('map.zoomOut', lang)} style={{ width:40, height:40, borderRadius:12, background:'rgba(255,255,255,0.92)' }}>−</button>
+            <button onClick={()=>{ if(currentUser){ const rect=viewportRef.current?.getBoundingClientRect(); if(rect) setMapOffset({ x:rect.width/2-currentUser.x*mapScale, y:rect.height/2-currentUser.y*mapScale }); } }} aria-label={t('map.center', lang)} title={t('map.center', lang)} style={{ width:40, height:40, borderRadius:12, background:'rgba(255,255,255,0.92)' }}>◎</button>
           </div>
-          <div style={{ position:'absolute', left:'50%', top:14, transform:'translateX(-50%)', zIndex:4, background:'rgba(38,70,83,0.86)', color:'white', padding:'6px 14px', borderRadius:999, fontSize:11, fontWeight:600 }}>{t('be_on_map',lang)} • Click to autopilot (A* path) • {fps}FPS • {district?.name}</div>
+          <div style={{ position:'absolute', left:'50%', top:14, transform:'translateX(-50%)', zIndex:4, background:'rgba(38,70,83,0.86)', color:'white', padding:'6px 14px', borderRadius:999, fontSize:11, fontWeight:600 }}>{t('hud.mapHint', lang)} · {fps} FPS · {districtLabel}</div>
           <canvas ref={snowCanvasRef} style={{ position:'absolute', inset:0, zIndex:4, pointerEvents:'none', opacity:snowEnabled?1:0 }} />
           {nightMode && <div style={{ position:'absolute', inset:0, zIndex:3, background:'radial-gradient(70% 60% at 50% 20%, rgba(80,120,255,0.18), rgba(10,15,35,0.55))', pointerEvents:'none' }}><div style={{ position:'absolute', inset:0, backgroundImage:"url('/assets/aurora.jpg')", backgroundSize:'cover', mixBlendMode:'overlay', opacity:0.25 }}></div></div>}
           <ParallaxWorld offset={mapOffset} scale={mapScale} />
@@ -968,35 +988,35 @@ export default function Page() {
               </div>
             ))}
           </div>
-          <div style={{ position:'absolute', right:14, top:14, zIndex:4, background:'rgba(255,255,255,0.92)', padding:'6px 12px', borderRadius:999, fontSize:11, fontWeight:600 }}>{weather ? `${weather.isSnow?'❄️': weather.isRain?'🌧️':'☀️'} Oslo • ${weather.temp}°C • ${weather.desc}` : 'Oslo'} • {levelUpShow? `LEVEL UP! ${levelUpShow.from}→${levelUpShow.to}` : `${district?.name} • ${t('night',lang)} ${nightMode?'on':'off'}`}</div>
+          <div style={{ position:'absolute', right:14, top:14, zIndex:4, background:'rgba(255,255,255,0.92)', padding:'6px 12px', borderRadius:999, fontSize:11, fontWeight:600 }}>{weather ? `${weather.isSnow?'❄️': weather.isRain?'🌧️':'☀️'} ${t('hud.oslo', lang)} · ${weather.temp}°C · ${currentWeatherLabel}` : t('hud.oslo', lang)} · {levelUpShow ? `${t('hud.levelUp', lang)} ${levelUpShow.from}→${levelUpShow.to}` : `${districtLabel} · ${nightMode ? t('hud.nightOn', lang) : t('hud.nightOff', lang)}`}</div>
           <MobileJoystick onMove={(dx,dy)=>{ if(!currentUser|| (dx===0&&dy===0)) return; const nx=currentUser.x+dx*8; const ny=currentUser.y+dy*8; setCurrentUser({...currentUser,x:nx,y:ny}); setWalkKm(k=>k+Math.hypot(dx,dy)*0.002); }} />
-          {levelUpShow && <div style={{ position:'absolute', left:'50%', top:'40%', transform:'translate(-50%,-50%)', background:'linear-gradient(135deg,#264653,#2A9D8F)', color:'white', padding:'16px 24px', borderRadius:20, fontWeight:800, fontSize:22, zIndex:10, boxShadow:'0 20px 60px rgba(0,0,0,0.3)', animation:'levelUp 0.6s cubic-bezier(.16,1,.3,1)' }}>🎉 LEVEL UP! {levelUpShow.from} → {levelUpShow.to} 🎉<br /><small style={{ fontSize:12, fontWeight:500 }}>Reward: {SEASON_1.tiers[levelUpShow.to-1]?.reward.emoji} {SEASON_1.tiers[levelUpShow.to-1]?.reward.name||'+100 🪙'}</small></div>}
+          {levelUpShow && <div style={{ position:'absolute', left:'50%', top:'40%', transform:'translate(-50%,-50%)', background:'linear-gradient(135deg,#264653,#2A9D8F)', color:'white', padding:'16px 24px', borderRadius:20, fontWeight:800, fontSize:22, zIndex:10, boxShadow:'0 20px 60px rgba(0,0,0,0.3)', animation:'levelUp 0.6s cubic-bezier(.16,1,.3,1)' }}>🎉 {t('hud.levelUp', lang)} {levelUpShow.from} → {levelUpShow.to} 🎉<br /><small style={{ fontSize:12, fontWeight:500 }}>{t('hud.reward', lang)}: {SEASON_1.tiers[levelUpShow.to-1]?.reward.emoji} {SEASON_1.tiers[levelUpShow.to-1]?.reward.name||'+100 🪙'}</small></div>}
           <style>{`@keyframes coinFloat{0%,100%{transform:translate(-50%,-50%) translateY(0)}50%{transform:translate(-50%,-50%) translateY(-6px)}} @keyframes bubbleIn{from{transform:translateY(6px) scale(.9);opacity:0}to{transform:translateY(0) scale(1);opacity:1}} @keyframes walkBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}} @keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.02)}} @keyframes levelUp{from{transform:translate(-50%,-40%) scale(0.8);opacity:0}to{transform:translate(-50%,-50%) scale(1);opacity:1}}`}</style>
         </main>
 
         <aside style={{ width:330, background:'rgba(255,255,255,0.9)', backdropFilter:'blur(16px)', borderLeft:'1px solid rgba(0,0,0,0.06)', overflowY:'auto', padding:14 }}>
-          <h3 style={{ fontSize:11, letterSpacing:'.12em', color:'#8aa0ad', margin:'0 0 12px' }}>{t('quests',lang)} • {quests.filter(q=>q.done).length}/{quests.length} • {badges.length} badges</h3>
+          <h3 style={{ fontSize:11, letterSpacing:'.12em', color:'#8aa0ad', margin:'0 0 12px' }}>{t('quests.title', lang)} · {quests.filter(q=>q.done).length}/{quests.length} · {t('landmarks.badges', lang, { count: badges.length })}</h3>
           <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
             {quests.map(q=>(
               <div key={q.id} style={{ display:'flex', gap:10, padding:10, borderRadius:14, background:'white', border:'1px solid #e6ecea', opacity:q.done?0.6:1 }}>
                 <div style={{ width:32, height:32, borderRadius:9, background:'#f1f6f5', display:'grid', placeItems:'center' }}>{q.icon}</div>
-                <div style={{ flex:1 }}><b style={{ fontSize:12 }}>{q.title}</b><br /><small style={{ fontSize:11, color:'#7a8e98' }}>{q.progress}/{q.total} • +{q.reward}🪙</small></div>
+                <div style={{ flex:1 }}><b style={{ fontSize:12 }}>{t(q.titleKey, lang)}</b><br /><small style={{ fontSize:11, color:'#7a8e98' }}>{q.progress}/{q.total} • +{q.reward}🪙</small></div>
               </div>
             ))}
           </div>
-          <h3 style={{ fontSize:11, letterSpacing:'.12em', color:'#8aa0ad', margin:'16px 0 12px' }}>{t('chat',lang)} • Proximity • {chat.length} 💬</h3>
+          <h3 style={{ fontSize:11, letterSpacing:'.12em', color:'#8aa0ad', margin:'16px 0 12px' }}>{t('chat.title', lang)} · {t('chat.proximity', lang)} · {chat.length} 💬</h3>
           <div style={{ display:'flex', flexDirection:'column', gap:8, maxHeight:200, overflowY:'auto', marginBottom:8 }}>
             {chat.slice(-20).map((m:any)=>(
               <div key={m.id} style={{ fontSize:12 }}><b style={{ fontSize:11, color:'#2A9D8F' }}>{m.name}</b><br /><span style={{ background:m.player_id===currentUser?.id?'#264653':'#f2f6f6', color:m.player_id===currentUser?.id?'white':'#1a2a33', padding:'4px 8px', borderRadius:'12px 12px 12px 4px', display:'inline-block', marginTop:2, maxWidth:'90%' }}>{m.text}</span></div>
             ))}
           </div>
           <div style={{ display:'flex', gap:6 }}>
-            <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter') sendChat(); }} placeholder="Say hei... try 'coffee' near Grüner" style={{ flex:1, height:36, borderRadius:999, border:'1px solid #dde7e8', padding:'0 12px', fontSize:12 }} />
-            <button onClick={sendChat} style={{ width:36, height:36, borderRadius:'50%', border:'none', background:'#264653', color:'white' }}>➤</button>
+            <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter') sendChat(); }} placeholder={t('chat.placeholder', lang)} style={{ flex:1, height:36, borderRadius:999, border:'1px solid #dde7e8', padding:'0 12px', fontSize:12 }} />
+            <button onClick={sendChat} aria-label={t('chat.send', lang)} title={t('chat.send', lang)} style={{ width:36, height:36, borderRadius:'50%', border:'none', background:'#264653', color:'white' }}>➤</button>
           </div>
           <div style={{ marginTop:12, background:'#f8fdfc', border:'1px solid #e1ecea', borderRadius:12, padding:10, fontSize:11 }}>
-            <b>Analytics (local)</b><br />Moves: {funnel.moves} • Collects: {funnel.collects} • Chats: {funnel.chats} • Shops: {funnel.shops}<br />
-            <small>FPS {fps} • {socketStatus} • {t('snow',lang)} {snowEnabled?'on':'off'} • Pathfinding A*</small>
+            <b>{t('analytics.title', lang)}</b><br />{t('analytics.stats', lang, funnel)}<br />
+            <small>{t('analytics.footer', lang, { fps, socket: socketStatus, snow: snowEnabled ? t('state.on', lang) : t('state.off', lang) })}</small>
           </div>
         </aside>
       </div>
@@ -1009,7 +1029,7 @@ export default function Page() {
               <div><b style={{ fontSize:18 }}>{showPlayerModal.name}</b><br /><small style={{ color:'#6d818c' }}>{showPlayerModal.status}</small></div>
             </div>
             <div style={{ display:'flex', gap:8 }}>
-              <button onClick={()=>{ setShowPlayerModal(null); const rect=viewportRef.current?.getBoundingClientRect(); if(rect) setMapOffset({ x:rect.width/2-showPlayerModal.x*mapScale, y:rect.height/2-showPlayerModal.y*mapScale }); moveTo(showPlayerModal.x, showPlayerModal.y, true); }} style={{ flex:1, height:40, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>📍 Visit (A*)</button>
+              <button onClick={()=>{ setShowPlayerModal(null); const rect=viewportRef.current?.getBoundingClientRect(); if(rect) setMapOffset({ x:rect.width/2-showPlayerModal.x*mapScale, y:rect.height/2-showPlayerModal.y*mapScale }); moveTo(showPlayerModal.x, showPlayerModal.y, true); }} style={{ flex:1, height:40, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>📍 {t('social.visit', lang)}</button>
               <button onClick={() => {
                 setShowPlayerModal(null);
                 if (socket.connected) socket.emit('wave', { targetId: showPlayerModal.id });
@@ -1017,7 +1037,7 @@ export default function Page() {
                 advanceQuest('q1');
                 track('chat', 'wave', { x: showPlayerModal.x, y: showPlayerModal.y });
                 audio.pop();
-              }} style={{ flex: 1, height: 40, borderRadius: 12, border: 'none', background: '#264653', color: 'white', fontWeight: 700 }}>👋 Wave</button>
+              }} style={{ flex: 1, height: 40, borderRadius: 12, border: 'none', background: '#264653', color: 'white', fontWeight: 700 }}>👋 {t('social.wave', lang)}</button>
             </div>
           </div>
         </div>
@@ -1026,13 +1046,13 @@ export default function Page() {
       {showShop && (
         <div onClick={()=>setShowShop(false)} style={{ position:'fixed', inset:0, background:'rgba(20,32,38,0.48)', backdropFilter:'blur(14px)', display:'grid', placeItems:'center', zIndex:50, padding:16 }}>
           <div onClick={e=>e.stopPropagation()} style={{ background:'rgba(255,255,255,0.96)', borderRadius:28, padding:20, width:560, maxWidth:'96vw', maxHeight:'92vh', overflowY:'auto' }}>
-            <div style={{ display:'flex', justifyContent:'space-between' }}><h2 style={{ margin:0 }}>Oslo Shop 🛍️ • Daily Seed {dailyShop.seed} • {t('shop',lang)}</h2><button onClick={()=>setShowShop(false)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>✕</button></div>
+            <div style={{ display:'flex', justifyContent:'space-between' }}><h2 style={{ margin:0 }}>{t('shop.title', lang)} 🛍️ · {t('shop.dailySeed', lang, { seed: dailyShop.seed })}</h2><button onClick={()=>setShowShop(false)} aria-label={t('photo.close', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>✕</button></div>
             <div style={{ width:'100%', height:120, borderRadius:18, backgroundImage:"url('/assets/shop.jpg')", backgroundSize:'cover', margin:'12px 0' }}></div>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
               {[...dailyShop.rare, ...dailyShop.common, dailyShop.legendary].map((item:any)=>(
                 <div key={item.id} style={{ background:'white', border:'1px solid #e6ecea', borderRadius:16, padding:12, display:'flex', gap:10, alignItems:'center' }}>
                   <div style={{ width:48, height:48, borderRadius:12, background:'#f6f9f8', display:'grid', placeItems:'center', fontSize:24 }}>{item.emoji}</div>
-                  <div><b style={{ fontSize:13 }}>{item.name}</b><br /><small style={{ fontSize:11, color:'#7b8f99' }}>{item.rarity} • {inventory[item.id]?'Owned':'New'}</small></div>
+                  <div><b style={{ fontSize:13 }}>{t(`shop.item.${item.id}`, lang)}</b><br /><small style={{ fontSize:11, color:'#7b8f99' }}>{t(`shop.rarity.${item.rarity}`, lang)} · {inventory[item.id] ? t('shop.owned', lang) : t('shop.new', lang)}</small></div>
                   <button onClick={() => {
                     if (inventory[item.id]) {
                       if (item.type === 'hat') setCustomHat(item.emoji);
@@ -1042,7 +1062,7 @@ export default function Page() {
                       }
                       return;
                     }
-                    if (coinCount < item.price) { setNotice('Not enough coins for this item.'); return; }
+                    if (coinCount < item.price) { setNotice(t('shop.notEnough', lang)); return; }
                     if (socket.connected) {
                       socket.emit('shop_buy', { itemId: item.id });
                     } else {
@@ -1065,11 +1085,11 @@ export default function Page() {
       {showBag && (
         <div onClick={()=>setShowBag(false)} style={{ position:'fixed', inset:0, background:'rgba(20,32,38,0.48)', backdropFilter:'blur(14px)', display:'grid', placeItems:'center', zIndex:50 }}>
           <div onClick={e=>e.stopPropagation()} style={{ background:'white', borderRadius:28, padding:20, width:400 }}>
-            <div style={{ display:'flex', justifyContent:'space-between' }}><h2>{t('bag',lang)} 🎒 • {Object.keys(inventory).length}/16</h2><button onClick={()=>setShowBag(false)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>✕</button></div>
+            <div style={{ display:'flex', justifyContent:'space-between' }}><h2>{t('bag.title', lang)} 🎒 · {Object.keys(inventory).length}/16</h2><button onClick={()=>setShowBag(false)} aria-label={t('photo.close', lang)} style={{ width:38, height:38, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>✕</button></div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginTop:12 }}>
               {Object.keys(inventory).map(k=>{ const item=SHOP_ITEMS.find(s=>s.id===k)||{emoji:'🎁'}; return <div key={k} style={{ aspectRatio:'1', background:'linear-gradient(180deg,#fffbe6,#fff3b0)', border:'1px solid #f5d77a', borderRadius:14, display:'grid', placeItems:'center', fontSize:22 }}>{(item as any).emoji}</div>; })}
             </div>
-            <div style={{ marginTop:12, fontSize:12, color:'#6d818c' }}>Coins {coinCount} • XP {xp} • Lv {lvlCalc} • Badges {badges.join(', ')||'none'} • Season {SEASON_1.name}</div>
+            <div style={{ marginTop:12, fontSize:12, color:'#6d818c' }}>{t('bag.stats', lang, { coins: coinCount.toLocaleString(numberLocale), xp, level: lvlCalc, badges: badges.join(', ') || t('bag.none', lang), season: SEASON_1.name })}</div>
           </div>
         </div>
       )}
@@ -1077,7 +1097,7 @@ export default function Page() {
       {showCustomizer && (
         <div style={{ position:'fixed', inset:0, background:'rgba(20,32,38,0.48)', backdropFilter:'blur(14px)', display:'grid', placeItems:'center', zIndex:50 }}>
           <div style={{ background:'white', borderRadius:28, padding:20, width:560 }}>
-            <h2 style={{ margin:'0 0 8px' }}>Customize 🧣 • {currentUser?.name}</h2>
+            <h2 style={{ margin:'0 0 8px' }}>{t('customize.title', lang)} 🧣 · {currentUser?.name}</h2>
             <div style={{ display:'grid', gridTemplateColumns:'140px 1fr', gap:16 }}>
               <div style={{ textAlign:'center' }}>
                 <div style={{ width:120, height:120, borderRadius:'50%', background:'linear-gradient(180deg,#eaf6fb,#fefae0)', border:`4px solid ${customColor}`, display:'grid', placeItems:'center', position:'relative', margin:'0 auto' }}>
@@ -1087,12 +1107,12 @@ export default function Page() {
                 </div>
               </div>
               <div>
-                <h4>Hat</h4><div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:12 }}>{['','🧶','🧢','👑','⛑️','🎀','🎩'].map(h=><button key={h} onClick={()=>setCustomHat(h)} style={{ width:48, height:48, borderRadius:14, border:customHat===h?'2px solid #2A9D8F':'2px solid #eef3f3', background:customHat===h?'#e6f4f2':'white', fontSize:22 }}>{h||'∅'}</button>)}</div>
-                <h4>Accessory</h4><div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:12 }}>{['','☕','🧣','🎧','📚','🕶️','🧤'].map(a=><button key={a} onClick={()=>setCustomAcc(a)} style={{ width:48, height:48, borderRadius:14, border:customAcc===a?'2px solid #2A9D8F':'2px solid #eef3f3', background:customAcc===a?'#e6f4f2':'white', fontSize:22 }}>{a||'∅'}</button>)}</div>
-                <h4>Color</h4><div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>{['#2A9D8F','#E76F51','#E9C46A','#264653','#A78BFA','#F472B6','#60A5FA'].map(c=><button key={c} onClick={()=>setCustomColor(c)} style={{ width:32, height:32, borderRadius:'50%', background:c, border:customColor===c?'3px solid #264653':'2px solid white', boxShadow:'0 2px 6px rgba(0,0,0,0.15)' }}></button>)}</div>
+                <h4>{t('customize.hat', lang)}</h4><div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:12 }}>{['','🧶','🧢','👑','⛑️','🎀','🎩'].map(h=><button key={h} onClick={()=>setCustomHat(h)} style={{ width:48, height:48, borderRadius:14, border:customHat===h?'2px solid #2A9D8F':'2px solid #eef3f3', background:customHat===h?'#e6f4f2':'white', fontSize:22 }}>{h||'∅'}</button>)}</div>
+                <h4>{t('customize.accessory', lang)}</h4><div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:12 }}>{['','☕','🧣','🎧','📚','🕶️','🧤'].map(a=><button key={a} onClick={()=>setCustomAcc(a)} style={{ width:48, height:48, borderRadius:14, border:customAcc===a?'2px solid #2A9D8F':'2px solid #eef3f3', background:customAcc===a?'#e6f4f2':'white', fontSize:22 }}>{a||'∅'}</button>)}</div>
+                <h4>{t('customize.color', lang)}</h4><div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>{['#2A9D8F','#E76F51','#E9C46A','#264653','#A78BFA','#F472B6','#60A5FA'].map(c=><button key={c} onClick={()=>setCustomColor(c)} style={{ width:32, height:32, borderRadius:'50%', background:c, border:customColor===c?'3px solid #264653':'2px solid white', boxShadow:'0 2px 6px rgba(0,0,0,0.15)' }}></button>)}</div>
               </div>
             </div>
-            <button onClick={()=>{ setShowCustomizer(false); if(currentUser) setCurrentUser({...currentUser, hat:customHat, acc:customAcc, color:customColor}); }} style={{ width:'100%', height:52, borderRadius:16, border:'none', background:'linear-gradient(135deg, #264653, #2A9D8F)', color:'white', fontWeight:700, marginTop:16 }}>Save & Enter AAA Oslo</button>
+            <button onClick={()=>{ setShowCustomizer(false); if(currentUser) setCurrentUser({...currentUser, hat:customHat, acc:customAcc, color:customColor}); }} style={{ width:'100%', height:52, borderRadius:16, border:'none', background:'linear-gradient(135deg, #264653, #2A9D8F)', color:'white', fontWeight:700, marginTop:16 }}>{t('customize.save', lang)}</button>
           </div>
         </div>
       )}
@@ -1100,67 +1120,67 @@ export default function Page() {
       {showPhoto && (
         <div style={{ position:'fixed', inset:0, background:'rgba(10,15,20,0.9)', zIndex:60, display:'grid', placeItems:'center' }}>
           <div style={{ background:'white', borderRadius:24, padding:20, width:400 }}>
-            <h2 style={{ margin:'0 0 12px' }}>Photo Mode 📸 • {photoFilter}</h2>
+            <h2 style={{ margin:'0 0 12px' }}>{t('photo.title', lang)} 📸 · {t(`photo.filter.${photoFilter}`, lang)}</h2>
             <div style={{ width:'100%', height:220, borderRadius:16, backgroundImage:"url('/assets/map.jpg')", backgroundSize:'cover', filter: photoFilter==='vivid'?'saturate(1.4)': photoFilter==='cozy'?'sepia(0.2) saturate(1.2)': photoFilter==='aurora'?'hue-rotate(40deg) saturate(1.3)':'grayscale(0.3)', position:'relative' }}>
               <div style={{ position:'absolute', left:'50%', top:'50%', transform:'translate(-50%,-100%)', display:'flex', flexDirection:'column', alignItems:'center' }}>
                 <div style={{ background:'#264653', color:'white', padding:'4px 10px', borderRadius:12, fontSize:12 }}>{statusInput}</div>
                 <img src={currentUser ? avatarOf(currentUser) : ''} style={{ width:56, height:56, borderRadius:'50%', border:`3px solid ${customColor}`, marginTop:6 }} alt="" />
               </div>
-              <div style={{ position:'absolute', bottom:8, left:8, background:'rgba(0,0,0,0.6)', color:'white', padding:'4px 8px', borderRadius:999, fontSize:10 }}>OSLOVILLE • {district?.name} • {new Date().toLocaleDateString()} • {coinCount}🪙</div>
+              <div style={{ position:'absolute', bottom:8, left:8, background:'rgba(0,0,0,0.6)', color:'white', padding:'4px 8px', borderRadius:999, fontSize:10 }}>OSLOVILLE · {districtLabel} · {new Date().toLocaleDateString(numberLocale)} · {coinCount.toLocaleString(numberLocale)}🪙</div>
             </div>
-            <div style={{ display:'flex', gap:6, marginTop:12 }}>{(['vivid', 'cozy', 'aurora', 'vintage'] as PhotoFilter[]).map(f=><button key={f} onClick={()=>setPhotoFilter(f)} style={{ flex:1, height:32, borderRadius:999, border:photoFilter===f?'2px solid #2A9D8F':'1px solid #dde7e8', background:photoFilter===f?'#e6f4f2':'white', fontSize:11, fontWeight:600 }}>{f}</button>)}</div>
-            <div style={{ display:'flex', gap:8, marginTop:12 }}><button onClick={()=>setShowPhoto(false)} style={{ flex:1, height:40, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>Close</button><button onClick={()=>{ setShowPhoto(false); setCoinCount(c=>c+20); setBadges(b=>[...b,'📸']); track('photo_share',photoFilter); audio.tone(800,0.2,'sine',0.2); }} style={{ flex:1, height:40, borderRadius:12, border:'none', background:'#264653', color:'white', fontWeight:700 }}>Share +20🪙</button></div>
+            <div style={{ display:'flex', gap:6, marginTop:12 }}>{(['vivid', 'cozy', 'aurora', 'vintage'] as PhotoFilter[]).map(f=><button key={f} onClick={()=>setPhotoFilter(f)} style={{ flex:1, height:32, borderRadius:999, border:photoFilter===f?'2px solid #2A9D8F':'1px solid #dde7e8', background:photoFilter===f?'#e6f4f2':'white', fontSize:11, fontWeight:600 }}>{t(`photo.filter.${f}`, lang)}</button>)}</div>
+            <div style={{ display:'flex', gap:8, marginTop:12 }}><button onClick={()=>setShowPhoto(false)} style={{ flex:1, height:40, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>{t('photo.close', lang)}</button><button onClick={()=>{ setShowPhoto(false); setCoinCount(c=>c+20); setBadges(b=>[...b,'📸']); track('photo_share',photoFilter); audio.tone(800,0.2,'sine',0.2); }} style={{ flex:1, height:40, borderRadius:12, border:'none', background:'#264653', color:'white', fontWeight:700 }}>{t('photo.share', lang)}</button></div>
           </div>
         </div>
       )}
 
       {showFeedback && (
         <div onClick={() => setShowFeedback(false)} style={{ position:'fixed', inset:0, background:'rgba(20,32,38,0.56)', backdropFilter:'blur(14px)', display:'grid', placeItems:'center', zIndex:60, padding:16 }}>
-          <section onClick={event => event.stopPropagation()} aria-label="Playtest feedback" style={{ background:'white', borderRadius:28, padding:22, width:'min(460px, 100%)', boxShadow:'0 30px 80px rgba(0,0,0,0.28)' }}>
+          <section onClick={event => event.stopPropagation()} aria-label={t('feedback.title', lang)} style={{ background:'white', borderRadius:28, padding:22, width:'min(460px, 100%)', boxShadow:'0 30px 80px rgba(0,0,0,0.28)' }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'start', gap:12 }}>
-              <div><h2 style={{ margin:0 }}>Playtest report 🐞</h2><p style={{ margin:'6px 0 0', color:'#647780', fontSize:13 }}>Send a reproducible issue directly to the live QA queue.</p></div>
-              <button onClick={() => setShowFeedback(false)} aria-label="Close feedback" style={{ width:36, height:36, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>✕</button>
+              <div><h2 style={{ margin:0 }}>{t('feedback.title', lang)} 🐞</h2><p style={{ margin:'6px 0 0', color:'#647780', fontSize:13 }}>{t('feedback.description', lang)}</p></div>
+              <button onClick={() => setShowFeedback(false)} aria-label={t('photo.close', lang)} style={{ width:36, height:36, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>✕</button>
             </div>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginTop:16 }}>
-              <label style={{ fontSize:12, fontWeight:700 }}>Area
+              <label style={{ fontSize:12, fontWeight:700 }}>{t('feedback.area', lang)}
                 <select value={feedbackCategory} onChange={event => setFeedbackCategory(event.target.value)} style={{ display:'block', width:'100%', marginTop:5, height:38, borderRadius:10, border:'1px solid #dbe5e7', padding:'0 8px' }}>
-                  <option value="gameplay">Gameplay</option><option value="multiplayer">Multiplayer</option><option value="performance">Performance</option><option value="ui">UI / accessibility</option><option value="economy">Economy</option>
+                  <option value="gameplay">{t('feedback.category.gameplay', lang)}</option><option value="multiplayer">{t('feedback.category.multiplayer', lang)}</option><option value="performance">{t('feedback.category.performance', lang)}</option><option value="ui">{t('feedback.category.ui', lang)}</option><option value="economy">{t('feedback.category.economy', lang)}</option>
                 </select>
               </label>
-              <label style={{ fontSize:12, fontWeight:700 }}>Impact
+              <label style={{ fontSize:12, fontWeight:700 }}>{t('feedback.impact', lang)}
                 <select value={feedbackSeverity} onChange={event => setFeedbackSeverity(event.target.value as typeof feedbackSeverity)} style={{ display:'block', width:'100%', marginTop:5, height:38, borderRadius:10, border:'1px solid #dbe5e7', padding:'0 8px' }}>
-                  <option value="blocker">Blocker — cannot play</option><option value="major">Major — core feature broken</option><option value="minor">Minor — polish issue</option><option value="idea">Idea / improvement</option>
+                  <option value="blocker">{t('feedback.severity.blocker', lang)}</option><option value="major">{t('feedback.severity.major', lang)}</option><option value="minor">{t('feedback.severity.minor', lang)}</option><option value="idea">{t('feedback.severity.idea', lang)}</option>
                 </select>
               </label>
             </div>
-            <label style={{ display:'block', fontSize:12, fontWeight:700, marginTop:12 }}>Short title
-              <input value={feedbackTitle} onChange={event => setFeedbackTitle(event.target.value)} maxLength={140} placeholder="e.g. Pickup does not reward after walking to it" style={{ display:'block', boxSizing:'border-box', width:'100%', marginTop:5, height:40, borderRadius:10, border:'1px solid #dbe5e7', padding:'0 10px' }} />
+            <label style={{ display:'block', fontSize:12, fontWeight:700, marginTop:12 }}>{t('feedback.shortTitle', lang)}
+              <input value={feedbackTitle} onChange={event => setFeedbackTitle(event.target.value)} maxLength={140} placeholder={t('feedback.titlePlaceholder', lang)} style={{ display:'block', boxSizing:'border-box', width:'100%', marginTop:5, height:40, borderRadius:10, border:'1px solid #dbe5e7', padding:'0 10px' }} />
             </label>
-            <label style={{ display:'block', fontSize:12, fontWeight:700, marginTop:12 }}>Steps to reproduce / expected result
-              <textarea value={feedbackReproduction} onChange={event => setFeedbackReproduction(event.target.value)} maxLength={1200} placeholder="1. …  2. …  Expected: …  Actual: …" style={{ display:'block', boxSizing:'border-box', width:'100%', minHeight:112, resize:'vertical', marginTop:5, borderRadius:10, border:'1px solid #dbe5e7', padding:10, fontFamily:'inherit' }} />
+            <label style={{ display:'block', fontSize:12, fontWeight:700, marginTop:12 }}>{t('feedback.reproduction', lang)}
+              <textarea value={feedbackReproduction} onChange={event => setFeedbackReproduction(event.target.value)} maxLength={1200} placeholder={t('feedback.reproductionPlaceholder', lang)} style={{ display:'block', boxSizing:'border-box', width:'100%', minHeight:112, resize:'vertical', marginTop:5, borderRadius:10, border:'1px solid #dbe5e7', padding:10, fontFamily:'inherit' }} />
             </label>
-            <p style={{ margin:'9px 0 0', fontSize:11, color:'#71838c' }}>Attached automatically: FPS, live connection state, map coordinates, district, weather and browser signature.</p>
-            <button onClick={submitFeedback} style={{ width:'100%', height:46, marginTop:14, border:0, borderRadius:14, background:'linear-gradient(135deg,#264653,#2A9D8F)', color:'white', fontWeight:800 }}>Send to live QA queue</button>
+            <p style={{ margin:'9px 0 0', fontSize:11, color:'#71838c' }}>{t('feedback.attached', lang)}</p>
+            <button onClick={submitFeedback} style={{ width:'100%', height:46, marginTop:14, border:0, borderRadius:14, background:'linear-gradient(135deg,#264653,#2A9D8F)', color:'white', fontWeight:800 }}>{t('feedback.send', lang)}</button>
           </section>
         </div>
       )}
 
-      {notice && <div role="status" style={{ position:'fixed', left:'50%', bottom:24, transform:'translateX(-50%)', zIndex:100, maxWidth:'min(500px, calc(100vw - 32px))', background:'#264653', color:'white', borderRadius:999, padding:'10px 18px', fontSize:13, fontWeight:600, boxShadow:'0 12px 30px rgba(0,0,0,.22)' }}>{notice}<button onClick={() => setNotice('')} aria-label="Dismiss notification" style={{ marginLeft:10, border:0, background:'transparent', color:'white', fontSize:16 }}>×</button></div>}
+      {notice && <div role="status" style={{ position:'fixed', left:'50%', bottom:24, transform:'translateX(-50%)', zIndex:100, maxWidth:'min(500px, calc(100vw - 32px))', background:'#264653', color:'white', borderRadius:999, padding:'10px 18px', fontSize:13, fontWeight:600, boxShadow:'0 12px 30px rgba(0,0,0,.22)' }}>{notice}<button onClick={() => setNotice('')} aria-label={t('settings.dismiss', lang)} style={{ marginLeft:10, border:0, background:'transparent', color:'white', fontSize:16 }}>×</button></div>}
 
       {showSettings && (
         <div onClick={()=>setShowSettings(false)} style={{ position:'fixed', inset:0, background:'rgba(20,32,38,0.48)', backdropFilter:'blur(14px)', display:'grid', placeItems:'center', zIndex:50 }}>
           <div onClick={e=>e.stopPropagation()} style={{ background:'white', borderRadius:28, padding:20, width:420 }}>
-            <h2>Settings ⚙️ • AAA • 20 Cycles</h2>
+            <h2>{t('settings.title', lang)} ⚙️</h2>
             <p style={{ fontSize:12, color:'#6d818c' }}>
-              Status: {socketStatus} • FPS {fps} • Lang {lang} • Weather {weather?.temp}°C {weather?.desc}<br />
-              Cycles logged in CYCLES.md • Perf {fps>=55?'✅':'⚠️'} • A11y 98 • Shop seed {dailyShop.seed}<br />
-              Analytics: {JSON.stringify(getFunnel())}<br />
-              Badges: {badges.join(', ')||'none'} • Discovered {discovered.size}/{LANDMARKS.length}<br />
-              NPCs: {NPCS.map(n=>n.name).join(', ')}
+              {t('settings.status', lang, { status: socketStatus, fps, lang: t(`language.${lang}`, lang), weather: `${weather?.temp ?? '—'}°C ${currentWeatherLabel}` })}<br />
+              {t('settings.metrics', lang, { performance: fps >= 55 ? '✅' : '⚠️', seed: dailyShop.seed })}<br />
+              {t('settings.analytics', lang, { analytics: JSON.stringify(getFunnel()) })}<br />
+              {t('settings.progress', lang, { badges: badges.join(', ') || t('bag.none', lang), discovered: discovered.size, total: LANDMARKS.length })}<br />
+              {t('settings.npcs', lang, { npcs: NPCS.map(n=>n.name).join(', ') })}
             </p>
             <div style={{ display:'flex', gap:8, marginTop:12 }}>
-              <button onClick={()=>{ localStorage.clear(); location.reload(); }} style={{ flex:1, height:40, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>Clear & Logout</button>
-              <button onClick={()=>setShowSettings(false)} style={{ flex:1, height:40, borderRadius:12, border:'none', background:'#264653', color:'white', fontWeight:700 }}>Close</button>
+              <button onClick={()=>{ localStorage.clear(); location.reload(); }} style={{ flex:1, height:40, borderRadius:12, border:'1px solid #e2e9eb', background:'white' }}>{t('settings.clearLogout', lang)}</button>
+              <button onClick={()=>setShowSettings(false)} style={{ flex:1, height:40, borderRadius:12, border:'none', background:'#264653', color:'white', fontWeight:700 }}>{t('settings.close', lang)}</button>
             </div>
           </div>
         </div>
