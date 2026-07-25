@@ -1,0 +1,16 @@
+{
+  "name": "OSLOVILLE - Live Map Social",
+  "short_name": "Osloville",
+  "description": "Be on the map. Literally. Cozy social world on real Oslo.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#FEFAE0",
+  "theme_color": "#264653",
+  "icons": [
+    {
+      "src": "assets/hero.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    }
+  ]
+}

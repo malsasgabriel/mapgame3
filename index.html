@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>OSLOVILLE — Live Cozy Map Social</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#264653">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="style.css">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+<!-- LOADING -->
+<div id="loadingScreen" class="screen active" style="display:grid;place-items:center;background: radial-gradient(60% 60% at 50% 30%, #FEFAE0, #CDEDF2);">
+  <div class="loader-card">
+    <div class="loader-logo"><div class="logo-pin lg"><svg viewBox="0 0 32 32" width="44" height="44"><path d="M16 2C11 2 7 6 7 11c0 7 9 19 9 19s9-12 9-19c0-5-4-9-9-9z" fill="#E76F51"/><circle cx="16" cy="11" r="4" fill="white"/></svg></div><b>OSLOVILLE</b><span>LIVE</span></div>
+    <div class="loader-map"><div class="loader-pin" style="left:30%;top:45%"></div><div class="loader-pin me" style="left:55%;top:55%"></div><div class="loader-pin" style="left:72%;top:38%"></div></div>
+    <div class="loader-bar"><div id="loaderFill" class="loader-fill" style="width:8%"></div></div>
+    <div id="loaderTip" class="loader-tip">Waking up Vigeland sculptures...</div>
+  </div>
+</div>
+
+<!-- LOGIN SCREEN -->
+<div id="loginScreen" class="screen">
+  <div class="hero-bg" style="background-image:url('assets/hero.jpg')"></div>
+  <div class="hero-overlay"></div>
+  <div class="hero-night" style="background-image:url('assets/oslo-winter-night.jpg')"></div>
+  <div class="login-clouds"></div>
+  
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="logo-pin"><svg viewBox="0 0 32 32" width="36" height="36"><path d="M16 2C11 2 7 6 7 11c0 7 9 19 9 19s9-12 9-19c0-5-4-9-9-9z" fill="#E76F51"/><circle cx="16" cy="11" r="4" fill="white"/></svg></div>
+      <h1>OSLOVILLE</h1><span class="logo-dotlive">LIVE</span>
+    </div>
+    <h2 class="login-title">Be on the map.<br><span>Literally.</span></h2>
+    <p class="login-sub">A cozy social world on real Oslo. See friends wander Karl Johan, set your bubble, collect boller & northern lights.</p>
+    
+    <div id="g_id_onload" data-client_id="1087815734233-abcdefghijklmnopqrstuvwxyz.apps.googleusercontent.com" data-context="signin" data-ux_mode="popup" data-callback="handleGoogleCredential" data-auto_prompt="false"></div>
+    <div class="g_id_signin_wrapper">
+      <div id="googleBtnOfficial"></div>
+      <button id="customGoogleBtn" class="btn-google">
+        <span class="g-icon"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg></span>
+        Continue with Google
+      </button>
+    </div>
+    <div class="divider"><span>or explore as guest</span></div>
+    <button id="demoLoginBtn" class="btn-demo"><span>✨</span> Play Demo — Jump into Oslo now</button>
+    <div class="login-footer">
+      <p>🎮 FarmVille top-down • 🗺️ Real Oslo • 💬 Live bubbles • ❄️ Seasons</p>
+      <div class="client-id-toggle">Custom <a href="#" id="showClientId">Google Client ID</a> • <a href="#" id="openSettingsFromLogin">Settings</a></div>
+      <div id="clientIdBox" class="hidden"><input id="clientIdInput" placeholder="Paste OAuth Client ID"/><button id="saveClientId" class="btn-small">Save</button></div>
+    </div>
+  </div>
+  <div class="login-preview-float">
+    <div class="mini-map-preview">
+      <div class="mini-dot" style="left:30%;top:40%"><div class="mini-bubble">kaffe? ☕</div></div>
+      <div class="mini-dot me" style="left:55%;top:55%"><div class="mini-bubble">in Vigeland! 🌳</div></div>
+      <div class="mini-dot" style="left:75%;top:35%"><div class="mini-bubble">skiing! ⛷️</div></div>
+    </div>
+    <div class="preview-label">LIVE NOW: 24 friends in Oslo</div>
+    <div class="preview-images"><img src="assets/items.png" alt="items"/></div>
+  </div>
+</div>
+
+<!-- GAME SCREEN -->
+<div id="gameScreen" class="screen">
+  <header class="game-header">
+    <div class="header-left">
+      <div class="logo-small"><div class="logo-pin sm"><svg viewBox="0 0 32 32" width="24" height="24"><path d="M16 2C11 2 7 6 7 11c0 7 9 19 9 19s9-12 9-19c0-5-4-9-9-9z" fill="#E76F51"/><circle cx="16" cy="11" r="4" fill="white"/></svg></div><b>OSLOVILLE</b></div>
+      <div class="level-box"><div class="level-ring"><span id="levelDisplay">5</span></div><div class="xp-bar"><div class="xp-fill" id="xpFill" style="width:62%"></div></div><span class="xp-text" id="xpText">620 / 1000 XP</span></div>
+      <div class="coins-box"><span class="coin-icon">🪙</span><span id="coinDisplay">1,240</span><span id="walkDisplay" class="walk-display">• 2.4km walked</span></div>
+    </div>
+    <div class="header-center">
+      <div class="status-composer">
+        <button id="emojiBtn" class="emoji-btn">😊</button>
+        <input id="statusInput" maxlength="48" placeholder="Set your bubble... e.g. 'Fika at Fuglen! ☕'"/>
+        <button id="statusSave" class="btn-status">Update</button>
+        <div id="emojiPicker" class="emoji-picker hidden"></div>
+      </div>
+    </div>
+    <div class="header-right">
+      <button class="icon-btn" id="shopBtn" title="Shop">🛍️</button>
+      <button class="icon-btn" id="bagBtn" title="Inventory">🎒</button>
+      <button class="icon-btn" id="photoBtn" title="Photo mode">📸</button>
+      <button class="icon-btn" id="nightToggle" title="Day/Night">🌙</button>
+      <button class="icon-btn" id="mapToggleBtn" title="Real/Story map">🗺️</button>
+      <button class="icon-btn" id="soundToggle">🔊</button>
+      <div class="user-menu" id="userMenuBtn"><img id="userAvatarTop" src="" alt=""><span id="userNameTop" class="user-name-top">You</span><span class="caret">▼</span></div>
+    </div>
+  </header>
+
+  <div class="game-body">
+    <aside class="sidebar left">
+      <div class="sidebar-section">
+        <h3><span>● Live</span> IN OSLO <b id="onlineCount">24</b> <a href="#" id="tutorialBtn" style="font-size:10px;color:#2A9D8F;text-decoration:none">HELP?</a></h3>
+        <div class="player-list" id="playerList"></div>
+      </div>
+      <div class="sidebar-section">
+        <h3>📍 LANDMARKS • <small id="discoveredCount">2/8</small></h3>
+        <div class="landmark-list" id="landmarkList"></div>
+      </div>
+      <div class="sidebar-section friends-sec">
+        <h3>💛 FRIENDS</h3>
+        <div id="friendsList" class="friends-list"></div>
+      </div>
+    </aside>
+
+    <main class="map-viewport" id="mapViewport">
+      <div class="map-controls"><button id="zoomIn">+</button><button id="zoomOut">−</button><button id="centerMe">◎</button><button id="snowToggle" title="Snow">❄️</button></div>
+      <div class="map-hint">Drag to explore • Click to walk • Click players to wave • Scroll to zoom</div>
+      <canvas id="snowCanvas" class="snow-canvas"></canvas>
+      <div id="nightOverlay" class="night-overlay hidden"></div>
+      <div class="map-layer" id="mapLayer">
+        <div id="leafletMap" class="leaflet-map hidden"></div>
+        <div id="collectiblesLayer"></div>
+        <div id="landmarksLayer"></div>
+        <div id="playersLayer"></div>
+        <svg id="trailSvg" width="2400" height="1800" style="position:absolute;left:0;top:0;pointer-events:none;"></svg>
+        <div id="photoFlash" class="photo-flash"></div>
+      </div>
+      <div class="weather-badge" id="weatherBadge">☀️ Oslo • -2°C • Golden hour • Tap 🌙 for night</div>
+      <div id="reactionBar" class="reaction-bar hidden"><button data-emoji="👋">👋</button><button data-emoji="❤️">❤️</button><button data-emoji="😂">😂</button><button data-emoji="🔥">🔥</button><button data-emoji="☕">☕</button><button data-emoji="⛷️">⛷️</button></div>
+    </main>
+
+    <aside class="sidebar right">
+      <div class="sidebar-section">
+        <h3>⭐ TODAY'S QUESTS <small id="questProgress">0/4</small></h3>
+        <div class="quests" id="questsList"></div>
+        <div class="daily-reward"><div class="reward-icon">🎁</div><div><b id="streakText">Daily Streak: 4 days</b><br><small>Come back tomorrow for +200 🪙</small></div><button id="claimDaily" class="btn-small">Claim</button></div>
+      </div>
+      <div class="sidebar-section">
+        <h3>🏆 OSLO LEADERS</h3>
+        <div id="leaderboard"></div>
+      </div>
+      <div class="sidebar-section chat-preview">
+        <h3>💌 NEARBY CHAT • <span id="chatTyping" class="typing"></span></h3>
+        <div id="chatFeed"></div>
+        <div class="chat-input-row"><input id="chatInput" placeholder="Say hei to nearby..."/><button id="chatSend">➤</button></div>
+      </div>
+    </aside>
+  </div>
+
+  <div id="playerModal" class="modal hidden"><div class="modal-card" id="modalCard"></div></div>
+  <div id="confettiRoot"></div>
+  <div id="tutorialOverlay" class="tutorial-overlay hidden">
+    <div class="tutorial-card"><h2>Welcome to Osloville! 👋</h2><div id="tutorialStep"></div><div class="tutorial-nav"><button id="tutPrev" class="btn-small light">Back</button><button id="tutNext" class="btn-small">Next</button></div></div>
+  </div>
+</div>
+
+<!-- MODALS -->
+<div id="googleChooser" class="modal hidden"><div class="chooser-card"><div class="chooser-header"><img src="https://www.google.com/images/branding/product/ico/googleg_lodp.ico" width="20"> Choose an account<br><small>to continue to <b>osloville.game</b></small></div><div class="chooser-accounts" id="chooserAccounts"></div><div class="chooser-footer">Google will share your name, email, avatar with Osloville.</div></div></div>
+
+<div id="customizerModal" class="modal hidden"><div class="modal-card wide">
+  <h2 style="margin:0 0 8px">Customize your explorer 🧣</h2><p style="font-size:13px;color:#6d818c;margin:0 0 16px">Pick a look for your map icon. Earn more in shop.</p>
+  <div class="customizer-grid">
+    <div class="customizer-preview"><div id="customizerAvatarWrap" class="customizer-avatar"></div><div id="customizerName" style="font-weight:700;margin-top:10px">You</div></div>
+    <div class="customizer-options">
+      <h4>Hat</h4><div id="hatOptions" class="option-row"></div>
+      <h4>Accessory</h4><div id="accOptions" class="option-row"></div>
+      <h4>Color</h4><div id="colorOptions" class="option-row"></div>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;margin-top:16px"><button id="customizerSave" class="btn-demo" style="flex:1">Save & Enter Oslo</button></div>
+</div></div>
+
+<div id="shopModal" class="modal hidden"><div class="modal-card wide">
+  <div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">Oslo Shop 🛍️</h2><button class="icon-btn" onclick="document.getElementById('shopModal').classList.add('hidden')">✕</button></div>
+  <div class="shop-hero" style="background-image:url('assets/shop.jpg')"></div>
+  <div id="shopGrid" class="shop-grid"></div>
+</div></div>
+
+<div id="bagModal" class="modal hidden"><div class="modal-card"><div style="display:flex;justify-content:space-between"><h2 style="margin:0">Your Bag 🎒</h2><button class="icon-btn" onclick="document.getElementById('bagModal').classList.add('hidden')">✕</button></div><div id="bagGrid" class="bag-grid"></div><div id="bagStats" style="margin-top:12px;font-size:12px;color:#6d818c"></div></div></div>
+
+<div id="settingsModal" class="modal hidden"><div class="modal-card"><h2>Settings ⚙️</h2>
+  <label style="font-size:12px;font-weight:600">Google Client ID (for real auth)</label><input id="clientIdInput2" style="width:100%;height:40px;border:1px solid #dde7e8;border-radius:12px;padding:0 12px;margin:6px 0 12px" placeholder="...apps.googleusercontent.com"/>
+  <label style="font-size:12px;font-weight:600">Your Name</label><input id="settingsName" style="width:100%;height:40px;border:1px solid #dde7e8;border-radius:12px;padding:0 12px;margin:6px 0 12px"/>
+  <div style="display:flex;gap:8px"><button id="settingsSave" class="btn-demo" style="flex:1">Save</button><button id="logoutBtn" class="btn-google" style="flex:1">Logout</button></div>
+  <p style="font-size:11px;color:#8aa0ad;margin-top:12px">Tip: map=🗺️ real tiles (Carto Voyager), story=🎨 hand-drawn. Snow ❄️ toggles particle snow. 🌙 toggles northern lights night.</p>
+</div></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
