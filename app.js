@@ -9,7 +9,7 @@ let quests = [];
 let coinCount = 1240;
 let xp = 620;
 let level = 5;
-let walkDistance = 2.4;
+let walkDistance = 0;
 let mapOffset = {x: -700, y: -500};
 let mapScale = 0.92;
 let isDragging = false;
@@ -88,6 +88,8 @@ const mapViewport = $('#mapViewport');
 const playersLayer = $('#playersLayer');
 const collectiblesLayer = $('#collectiblesLayer');
 const landmarksLayer = $('#landmarksLayer');
+const FALLBACK_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'><rect width='100' height='100' fill='%23e2e9eb'/><text x='50' y='56' text-anchor='middle' font-size='38'>🙂</text></svg>";
+function safeAvatar(url){ return url || FALLBACK_AVATAR; }
 
 /* ---------- LOADING ---------- */
 const tips = [
@@ -132,16 +134,18 @@ function parseJwt(token){
   const json = decodeURIComponent(atob(b64).split('').map(c=> '%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''));
   return JSON.parse(json);
 }
+let gsiInitialized = false;
 function initGoogle(){
   try{
-    if(window.google && google.accounts && google.accounts.id){
+    if(window.google && google.accounts && google.accounts.id && !gsiInitialized){
+      gsiInitialized = true;
       const saved = localStorage.getItem('oslo_client_id') || "1087815734233-xyz.apps.googleusercontent.com";
       google.accounts.id.initialize({client_id: saved, callback: handleGoogleCredential, auto_select:false});
       google.accounts.id.renderButton($('#googleBtnOfficial'), {theme:'outline', size:'large', width:380, shape:'pill', text:'continue_with'});
     }
   }catch{}
 }
-setTimeout(initGoogle,1200); setTimeout(initGoogle,3000);
+setTimeout(initGoogle,1200);
 $('#customGoogleBtn').addEventListener('click', e=>{
   e.preventDefault();
   if(window.google?.accounts?.id && localStorage.getItem('oslo_client_id')){
@@ -195,13 +199,16 @@ function loginAs(user){
     y: 800 + Math.random()*200,
     targetX:null, targetY:null,
     status: user.status || "Just arrived! Hei Oslo! 👋",
-    level: user.level || 5, xp: user.xp || 620, coins: user.coins || 1240,
+    level: user.level || 5,
+    xp: user.xp || 620,
+    coins: user.coins || 1240,
+    walkKm: user.walkDistance || 0
   };
   avatarCustom = user.avatarCustom || {hat:'🧶', acc:'☕', color: COLORS[Math.floor(Math.random()*COLORS.length)]};
   inventory = user.inventory || {'hat_beanie':1, 'acc_coffee':1};
   discovered = new Set(user.discovered || ['palace','karljohan']);
   friends = new Set(user.friends || []);
-  walkDistance = user.walkDistance || 2.4;
+  walkDistance = user.walkDistance || 0;
   coinCount = currentUser.coins;
   xp = currentUser.xp;
   level = currentUser.level;
@@ -288,13 +295,24 @@ function initGameData(){
 }
 
 function renderAllStatic(){
+  // Restore saved quest progress if present.
+  try {
+    const savedQuests = JSON.parse(localStorage.getItem('oslo_quests')||'null');
+    if(Array.isArray(savedQuests)){
+      savedQuests.forEach(saved => {
+        const q = quests.find(x => x.id === saved.id);
+        if(q){ q.progress = saved.progress ?? q.progress; q.done = !!saved.done; }
+      });
+    }
+  } catch {}
+
   const allForList=[currentUser, ...players].sort((a,b)=> Math.hypot(a.x-currentUser.x,a.y-currentUser.y)-Math.hypot(b.x-currentUser.x,b.y-currentUser.y));
   const list=$('#playerList'); list.innerHTML='';
   allForList.slice(0,30).forEach(p=>{
     const isMe=p.id===currentUser.id;
     const dist=Math.round(Math.hypot(p.x-currentUser.x,p.y-currentUser.y)/6);
     const row=document.createElement('div'); row.className='player-row'+(isMe?' me':'');
-    row.innerHTML=`<img src="${p.avatar}"><div class="p-info"><div class="p-name">${p.name}${isMe?' (you)':''}</div><div class="p-status">${esc(p.status||'')}</div></div><div class="p-dist">${dist}m</div>`;
+    row.innerHTML=`<img src="${safeAvatar(p.avatar)}"><div class="p-info"><div class="p-name">${p.name}${isMe?' (you)':''}</div><div class="p-status">${esc(p.status||'')}</div></div><div class="p-dist">${dist}m</div>`;
     row.onclick=()=>focusPlayer(p); list.appendChild(row);
   });
   $('#onlineCount').textContent=players.length+1;
@@ -327,7 +345,15 @@ function renderAllStatic(){
   });
   $('#questProgress').textContent=`${quests.filter(q=>q.done).length}/${quests.length}`;
   // streak
-  const streak=parseInt(localStorage.getItem('oslo_streak')||'4');
+  const savedStreak = parseInt(localStorage.getItem('oslo_streak')||'0');
+  const today = new Date().toISOString().slice(0,10);
+  const lastClaim = localStorage.getItem('oslo_last_claim');
+  let streak = isNaN(savedStreak) ? 0 : savedStreak;
+  if(lastClaim !== today){
+    streak = lastClaim ? streak + 1 : 1;
+    localStorage.setItem('oslo_last_claim', today);
+    localStorage.setItem('oslo_streak', String(streak));
+  }
   $('#streakText').textContent=`Daily Streak: ${streak} days`;
 }
 
@@ -414,7 +440,7 @@ function initMap(){
   mapViewport.addEventListener('touchstart', e=>{
     if(e.touches.length===1){ isDragging=true; hasDragged=false; dragStart.x=e.touches[0].clientX; dragStart.y=e.touches[0].clientY; dragStart.offX=mapOffset.x; dragStart.offY=mapOffset.y; }
     else if(e.touches.length===2){ const dx=e.touches[0].clientX-e.touches[1].clientX, dy=e.touches[0].clientY-e.touches[1].clientY; touchStartDist=Math.hypot(dx,dy); touchStartScale=mapScale; }
-  }, {passive:true});
+  });
   mapViewport.addEventListener('touchmove', e=>{
     if(e.touches.length===1 && isDragging){
       const dx=e.touches[0].clientX-dragStart.x, dy=e.touches[0].clientY-dragStart.y;
@@ -513,7 +539,7 @@ function collectItem(id){
   coinCount+=add; xp+=15; inventory[c.type]=(inventory[c.type]||0)+1;
   const q=quests.find(q=>q.id==='q3'); if(q && !q.done){ q.progress=Math.min(q.total,q.progress+1); if(q.progress>=q.total){ q.done=true; coinCount+=q.reward; xp+=60; showToast(`Quest complete! +${q.reward} 🪙`); spawnConfetti(); } }
   // walk quest
-  const qWalk=quests.find(q=>q.id==='q5'); if(qWalk && !qWalk.done && walkDistance>1){ qWalk.done=true; qWalk.progress=1; coinCount+=qWalk.reward; showToast(`Walked 1km! +${qWalk.reward} 🪙 ❄️`); }
+  const qWalk=quests.find(q=>q.id==='q5'); if(qWalk && !qWalk.done){ qWalk.progress=Math.max(qWalk.progress, Math.floor(walkDistance)); if(qWalk.progress>=qWalk.total){ qWalk.done=true; qWalk.progress=qWalk.total; coinCount+=qWalk.reward; showToast(`Walked 1km! +${qWalk.reward} 🪙 ❄️`); } }
   updateHUD(); saveProgress(); if(audioEnabled) playCoin(); if(c.type==='gem') spawnConfetti();
 }
 function checkLandmarkProximity(x,y){
@@ -765,16 +791,17 @@ $('#reactionBar').addEventListener('click', e=>{
 
 /* ---------- OTHER UI ---------- */
 function renderLeaderboard(){
-  const sorted=[...players].sort(()=>0.5-Math.random()).slice(0,6); sorted.unshift(currentUser);
+  const sorted=[...players].sort((a,b)=> (b.coins||0)-(a.coins||0) || a.name.localeCompare(b.name)).slice(0,6);
   const lb=$('#leaderboard'); lb.innerHTML='';
-  sorted.slice(0,7).forEach((p,i)=>{
+  sorted.forEach((p,i)=>{
     const row=document.createElement('div'); row.className='leader-row'+(p.id===currentUser.id?' me':'');
-    row.innerHTML=`<span style="font-weight:800;font-size:11px;width:14px">${i+1}</span><img class="leader-ava" src="${p.avatar}"><div class="leader-name">${p.name.split(' ')[0]}</div><div class="leader-score">${Math.floor(800+Math.random()*1200)} 🪙</div>`;
+    row.innerHTML=`<span style="font-weight:800;font-size:11px;width:14px">${i+1}</span><img class="leader-ava" src="${safeAvatar(p.avatar)}"><div class="leader-name">${p.name.split(' ')[0]}</div><div class="leader-score">${Math.floor((p.coins||0))} 🪙</div>`;
     lb.appendChild(row);
   });
 }
 function renderChatInitial(){
   [{name:"Ingrid", text:"anyone near Mathallen hungry?"},{name:"Magnus", text:"live coding at Rebel, come! 💻"},{name:"Sofia", text:"Vigeland magical in snow ❄️"}].forEach(m=>pushChat(m));
+  const feed=$('#chatFeed'); if(feed){ feed.scrollTop=feed.scrollHeight; }
 }
 function pushChat(msg){
   const feed=$('#chatFeed'); const div=document.createElement('div'); div.className='chat-msg'+(msg.me?' me':'');

@@ -330,6 +330,9 @@ export default function Page() {
       setCollectibles(prev => prev.map(c => c.id === data.itemId ? { ...c, collected: true } : c));
       if (data.collectorId === currentUserRef.current?.id) advanceQuest('q3');
     };
+    const onInventoryUpdate = (inventory: Record<string, number>) => {
+      setInventory(inventory);
+    };
     const onWorldState = (data: { claimedItemIds?: string[] }) => {
       const claimed = Array.isArray(data.claimedItemIds) ? data.claimedItemIds : [];
       claimed.forEach(itemId => claimedCollectiblesRef.current.add(itemId));
@@ -400,6 +403,7 @@ export default function Page() {
     socket.on('player_updated', onPlayerUpdated);
     socket.on('chat_message', onChatMessage);
     socket.on('item_collected', onItemCollected);
+    socket.on('inventory_update', onInventoryUpdate);
     socket.on('world_state', onWorldState);
     socket.on('hud_update', onHudUpdate);
     socket.on('discovery_unlocked', onDiscoveryUnlocked);
@@ -426,6 +430,7 @@ export default function Page() {
       socket.off('player_updated', onPlayerUpdated);
       socket.off('chat_message', onChatMessage);
       socket.off('item_collected', onItemCollected);
+      socket.off('inventory_update', onInventoryUpdate);
       socket.off('world_state', onWorldState);
       socket.off('hud_update', onHudUpdate);
       socket.off('discovery_unlocked', onDiscoveryUnlocked);
@@ -532,16 +537,19 @@ export default function Page() {
   // Mount client-side GIS script
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      const win = window as any;
+      const alreadyInitialized = win.__osloGsiReady;
       const script = document.createElement('script');
       script.src = 'https://accounts.google.com/gsi/client';
       script.async = true;
       script.defer = true;
       document.body.appendChild(script);
 
-      script.onload = () => {
+      const initGoogleOnce = () => {
         try {
-          if (googleClientId && (window as any).google?.accounts?.id) {
-            (window as any).google.accounts.id.initialize({
+          if (googleClientId && win.google?.accounts?.id && !win.__osloGsiReady) {
+            win.__osloGsiReady = true;
+            win.google.accounts.id.initialize({
               client_id: googleClientId,
               callback: (response: any) => {
                 const payload = parseJwt(response.credential);
@@ -565,6 +573,12 @@ export default function Page() {
         }
       };
 
+      if (alreadyInitialized || win.google?.accounts?.id) {
+        initGoogleOnce();
+      } else {
+        script.onload = initGoogleOnce;
+      }
+
       return () => {
         try {
           document.body.removeChild(script);
@@ -587,9 +601,15 @@ export default function Page() {
       acc: user.acc || customAcc,
       color: user.color || customColor,
       level: user.level ?? 5,
+      coins: user.coins ?? 500,
+      xp: user.xp ?? 0,
+      walkKm: user.walkKm ?? 0,
     };
     setCurrentUser(p);
     setStatusInput(p.status);
+    setCoinCount(p.coins ?? 500);
+    setXp(p.xp ?? 0);
+    setWalkKm(p.walkKm ?? 0);
     setShowLogin(false);
     localStorage.setItem('oslo_user_next', JSON.stringify(p));
 

@@ -258,6 +258,7 @@ export class SocketController {
             xp: result.player.xp,
             level: result.player.level,
           });
+          socket.emit('inventory_update', result.inventory);
 
           // Broadcast collection to all clients to hide the coin on maps
           this.io.emit('item_collected', {

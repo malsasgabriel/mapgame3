@@ -9,7 +9,7 @@ export interface CollectItemParams {
 export class CollectItem {
   constructor(private playerRepo: IPlayerRepository) {}
 
-  async execute(params: CollectItemParams): Promise<{ player: Player; coinsAdded: number; xpAdded: number } | null> {
+  async execute(params: CollectItemParams): Promise<{ player: Player; inventory: Record<string, number> } | null> {
     const player = await this.playerRepo.findById(params.playerId);
     if (!player) return null;
 
@@ -47,11 +47,10 @@ export class CollectItem {
 
     player.updatedAt = new Date();
     const savedPlayer = await this.playerRepo.save(player);
-
+    const inventory = await this.playerRepo.getInventory(params.playerId);
     return {
       player: savedPlayer,
-      coinsAdded,
-      xpAdded,
+      inventory,
     };
   }
 }
