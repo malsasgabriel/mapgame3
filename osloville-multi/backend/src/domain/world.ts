@@ -33,6 +33,23 @@ const COLLECTIBLE_TYPES: Array<Pick<WorldCollectible, 'icon' | 'type'>> = [
   { icon: '🧤', type: 'mitten' },
 ];
 
+/**
+ * Authoritative coin reward per collectible type. The socket layer resolves a
+ * pickup to its type from this same module before rewarding, so the payout can
+ * never be chosen by the browser. Keyed by every `CollectibleType`, so adding a
+ * new type is a compile error until its reward is defined here.
+ */
+export const COLLECTIBLE_REWARDS: Record<CollectibleType, number> = {
+  coin: 20,
+  heart: 40,
+  gem: 80,
+  coffee: 30,
+  mitten: 25,
+};
+
+/** Flat XP granted for collecting any pickup. */
+export const COLLECT_XP = 15;
+
 function dateKey(date = new Date()): string {
   return date.toISOString().slice(0, 10);
 }

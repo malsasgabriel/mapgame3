@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { BuyShopItem } from '../domain/use-cases/BuyShopItem';
+import { CollectItem } from '../domain/use-cases/CollectItem';
 import { MovePlayer } from '../domain/use-cases/MovePlayer';
-import { getWorldCollectibles, WORLD_LANDMARKS } from '../domain/world';
+import {
+  COLLECTIBLE_REWARDS,
+  COLLECT_XP,
+  getWorldCollectibles,
+  WORLD_LANDMARKS,
+} from '../domain/world';
 import { MemoryPlayerRepository, makePlayer } from './helpers';
 
 test('movement clamps teleport attempts and derives distance server-side', async () => {
@@ -41,6 +47,41 @@ test('shop catalog is authoritative and an owned item equips without a second ch
   assert.ok(equipped);
   assert.equal(equipped.player.coins, 380);
   await assert.rejects(() => shop.execute({ playerId: 'test-player', itemId: 'forged_free_crown' }), /UNKNOWN_SHOP_ITEM/);
+});
+
+test('collecting a pickup awards the authoritative reward for its type', async () => {
+  const repo = new MemoryPlayerRepository([makePlayer({ coins: 100, xp: 0, level: 5 })]);
+  const collect = new CollectItem(repo);
+
+  const gem = await collect.execute({ playerId: 'test-player', itemType: 'gem' });
+  assert.ok(gem);
+  assert.equal(gem.player.coins, 100 + COLLECTIBLE_REWARDS.gem);
+  assert.equal(gem.player.xp, COLLECT_XP);
+  // Collecting never mutates the durable cosmetic inventory.
+  assert.deepEqual(gem.inventory, {});
+
+  const coin = await collect.execute({ playerId: 'test-player', itemType: 'coin' });
+  assert.ok(coin);
+  assert.equal(coin.player.coins, 100 + COLLECTIBLE_REWARDS.gem + COLLECTIBLE_REWARDS.coin);
+  assert.equal(coin.player.xp, COLLECT_XP * 2);
+});
+
+test('collecting past a 1000 XP boundary raises the level and never lowers it', async () => {
+  const repo = new MemoryPlayerRepository([makePlayer({ xp: 990, level: 9 })]);
+  const collect = new CollectItem(repo);
+
+  const result = await collect.execute({ playerId: 'test-player', itemType: 'coin' });
+  assert.ok(result);
+  assert.equal(result.player.xp, 1005);
+  // floor(1005 / 1000) + 5 = 6, which is below the current level, so the
+  // already-earned level 9 must be preserved rather than regressed.
+  assert.equal(result.player.level, 9);
+});
+
+test('every collectible type maps to a positive authoritative reward', () => {
+  (['coin', 'heart', 'gem', 'coffee', 'mitten'] as const).forEach(type => {
+    assert.ok(COLLECTIBLE_REWARDS[type] > 0, `${type} reward must be positive`);
+  });
 });
 
 test('real Oslo landmark coordinates stay aligned with the map projection', () => {
