@@ -1,9 +1,10 @@
 import { IPlayerRepository } from '../repositories/IPlayerRepository';
 import { Player } from '../entities/Player';
+import { CollectibleType, COLLECTIBLE_REWARDS, COLLECT_XP } from '../world';
 
 export interface CollectItemParams {
   playerId: string;
-  itemType: 'coin' | 'heart' | 'gem' | 'coffee' | 'mitten';
+  itemType: CollectibleType;
 }
 
 export class CollectItem {
@@ -13,33 +14,14 @@ export class CollectItem {
     const player = await this.playerRepo.findById(params.playerId);
     if (!player) return null;
 
-    let coinsAdded = 0;
-    let xpAdded = 15;
-
-    switch (params.itemType) {
-      case 'coin':
-        coinsAdded = 20;
-        break;
-      case 'heart':
-        coinsAdded = 40;
-        break;
-      case 'gem':
-        coinsAdded = 80;
-        break;
-      case 'coffee':
-        coinsAdded = 30;
-        break;
-      case 'mitten':
-        coinsAdded = 25;
-        break;
-      default:
-        coinsAdded = 20;
-    }
+    // Rewards come from the authoritative catalog, never from the caller. An
+    // unrecognized type falls back to the coin payout instead of NaN.
+    const coinsAdded = COLLECTIBLE_REWARDS[params.itemType] ?? COLLECTIBLE_REWARDS.coin;
 
     player.coins += coinsAdded;
-    player.xp += xpAdded;
+    player.xp += COLLECT_XP;
 
-    // Starting level is 5, increments every 1000 XP
+    // Starting level is 5, increments every 1000 XP. Level never decreases.
     const calculatedLevel = Math.floor(player.xp / 1000) + 5;
     if (calculatedLevel > player.level) {
       player.level = calculatedLevel;

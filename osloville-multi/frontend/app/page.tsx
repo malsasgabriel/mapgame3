@@ -13,6 +13,7 @@ import { xyToLatLng } from '@/lib/geo';
 import { track, getFunnel } from '@/lib/analytics';
 import { screenShake, popScale, slowMo } from '@/lib/juice';
 import { getNpcResponse, getNearbyNpc, NPCS } from '@/lib/aiNpcs';
+import { PerformanceMonitor } from '@/lib/performance';
 import { MobileJoystick } from './components/MobileJoystick';
 
 const RealOsloMap = dynamic(() => import('./components/RealOsloMap').then(module => module.RealOsloMap), { ssr: false });
@@ -214,6 +215,14 @@ export default function Page() {
   const claimedCollectiblesRef = useRef(new Set<string>());
   const langRef = useRef<Lang>('en');
 
+  // Live FPS sampling. Every "AAA • {fps}FPS" badge and the feedback
+  // diagnostics read this value, so it must reflect the real animation frame
+  // rate rather than a hardcoded 60.
+  useEffect(() => {
+    const monitor = new PerformanceMonitor(setFps);
+    return () => monitor.stop();
+  }, []);
+
   // Lang detect
   useEffect(() => { setLang(detectLang()); }, []);
   useEffect(() => {
@@ -293,6 +302,11 @@ export default function Page() {
       setCoinCount(data.player.coins);
       setXp(data.player.xp);
       setWalkKm(data.player.walkKm);
+      // Landmark discovery and status live on the authoritative player record.
+      // Hydrate them so a returning explorer sees the districts they already
+      // unlocked (and the correct X/8 count) instead of the new-player default.
+      setDiscovered(new Set<string>(Array.isArray(data.player.discovered) ? data.player.discovered : ['palace', 'karljohan']));
+      if (typeof data.player.status === 'string' && data.player.status) setStatusInput(data.player.status);
       setCustomHat(data.player.hat || '');
       setCustomAcc(data.player.acc || '');
       setCustomColor(data.player.color || '#2A9D8F');
